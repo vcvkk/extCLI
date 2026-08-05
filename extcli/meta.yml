@@ -1,0 +1,7 @@
+name: extCLI
+description: "{plugin_description} [vcvkk/extCLI](https://github.com/vcvkk/extCLI)"
+id: extcli
+version: "0.1.0"
+author: "vcvkk"
+app_version: ">=12.9.0"
+sdk_version: ">=1.4.5.1"

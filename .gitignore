@@ -1,0 +1,8 @@
+builds/
+.elyx/
+__pycache__/
+*.pyc
+extcli/.elyxbuilder/cache/
+kotlin-build/
+extcli/.elyxbuilder/stats.yml
+.pytest_cache/

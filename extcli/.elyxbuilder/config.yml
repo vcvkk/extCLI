@@ -1,0 +1,16 @@
+zipFormat: eaf
+source: extcli/src
+buildNameUncompiled: '{name}-{version}'
+buildNameCompiled: '{name}-{version}-3.11'
+ignoreAll:
+- extcli/.elyxbuilder/cache/*
+compilationIgnore:
+- extcli/src/BasePlugin.py
+obfuscationConfig:
+  stripDocstrings: false
+  removeLogs: false
+  renameLocals: false
+  encodeStrings: false
+  encodeNumbers: false
+  zlibCompression: false
+  saveMapping: false

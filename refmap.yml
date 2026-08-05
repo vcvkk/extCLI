@@ -1,0 +1,5 @@
+metainfo: extcli/meta.yml
+main: extcli/src/BasePlugin.py
+strings: extcli/locales
+assets: extcli/res
+elyxbuilder: extcli/.elyxbuilder

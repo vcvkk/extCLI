@@ -1,0 +1,70 @@
+// fastfetch, for a screen forty columns wide.
+//
+// The logo every desktop shows is twenty-five columns of it, which on a phone
+// leaves fifteen for the text and wraps every line of it. So: the small logo,
+// a short key column, and the modules somebody actually reads on a phone —
+// what this device is, what it is running, and how much of it is left.
+//
+// This is a starting point, not a rule. It is an ordinary file inside the
+// container: `nano ~/.config/fastfetch/config.jsonc` and it is yours.
+{
+    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    "logo": {
+        "type": "small",
+        "padding": {
+            "top": 1,
+            "left": 1,
+            "right": 2
+        }
+    },
+    "display": {
+        "separator": " ",
+        "key": {
+            "width": 7
+        }
+    },
+    "modules": [
+        {
+            "type": "title",
+            "format": "{user-name}@{host-name}"
+        },
+        "separator",
+        {
+            "type": "os",
+            "key": "os"
+        },
+        {
+            "type": "kernel",
+            "key": "kernel",
+            "format": "{release}"
+        },
+        {
+            "type": "host",
+            "key": "device"
+        },
+        {
+            "type": "cpu",
+            "key": "cpu",
+            "format": "{name} ({cores-logical})"
+        },
+        {
+            "type": "memory",
+            "key": "memory"
+        },
+        {
+            "type": "disk",
+            "key": "disk",
+            "folders": "/"
+        },
+        {
+            "type": "shell",
+            "key": "shell"
+        },
+        {
+            "type": "terminal",
+            "key": "term"
+        },
+        "break",
+        "colors"
+    ]
+}
