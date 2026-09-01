@@ -245,8 +245,14 @@ def _file_forms(path):
     return forms
 
 
-INSTALL_METHODS = ("installPlugin", "installPluginFromFile",
-                   "loadPluginFromFile", "addPlugin")
+# Read out of the client's own dex rather than guessed: `installPlugin` and
+# `addPlugin` do not exist on any version, and asking for them only cost a
+# round of AttributeError before the right name was reached. The controller
+# also has validatePluginFromFile and copyArchiveToPluginsDirectory, which is
+# what the install sheet does step by step; loadPluginFromFile is the whole
+# journey in one call, so it goes first.
+INSTALL_METHODS = ("loadPluginFromFile", "copyArchiveToPluginsDirectory",
+                   "openPluginFile")
 
 
 def install(path):
