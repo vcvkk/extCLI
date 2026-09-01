@@ -17,7 +17,7 @@ Status: early development.
   Python-implemented fallback set (`ls`, `cat`, `grep`, `head`, …) for devices
   where the system shell is unavailable.
 - Client commands: `plugin` (list/info/install/enable/disable/reload/path/config),
-  `host` (status/paths/check/backends/version/class), `tg` (send/read/chats/id),
+  `host` (status/paths/check/backends/version/class), `tg` (send/read/get/chats/id),
   `config`, `log`.
 - Colors taken from your Telegram theme, plus an Amoled theme.
 

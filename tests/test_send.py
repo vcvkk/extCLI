@@ -59,6 +59,13 @@ class FakeMessaging(object):
         ]
         self.sent = []
         self.reads = []
+        self.downloads = []
+        self.attachments = [
+            {"id": 12, "name": "photo.jpg", "path": "/tmp/photo.jpg",
+             "size": 2048, "ok": True, "detail": ""},
+            {"id": 13, "name": "notes.pdf", "path": None, "size": 0,
+             "ok": False, "detail": "did not arrive within 120s"},
+        ]
         # two days apart, so the day separator has to appear twice whatever
         # timezone the tests run in
         self.messages = [
@@ -123,6 +130,10 @@ class FakeMessaging(object):
     def history(self, peer_id, limit=20, before=0):
         self.reads.append((peer_id, limit, before))
         return list(self.messages)[-limit:]
+
+    def download(self, peer_id, limit=20, before=0, target=".", timeout=None):
+        self.downloads.append((peer_id, limit, target))
+        return list(self.attachments)
 
 
 @pytest.fixture
@@ -321,7 +332,7 @@ def test_the_commands_are_separate_acts(shell):
     """Finding a chat, reading one and writing to one are different things,
     and no argument should quietly turn one into another."""
     assert set(shell.ctx.registry.get("tg").subcommands) == {
-        "send", "read", "chats", "id"}
+        "send", "read", "get", "chats", "id"}
     assert shell("tg send search durov").code != 0
 
 
@@ -524,3 +535,59 @@ def test_the_whole_point_of_the_thing(tmp_path):
     lines = [line for line in plain.text(result).splitlines() if line.strip()]
     assert len(lines) == 1
     assert lines[0].startswith("10 ")
+
+
+# --------------------------------------------------------------- attachments
+
+def test_get_saves_what_it_can_and_says_what_it_could_not(shell):
+    """Some of a batch arriving is the ordinary outcome on a phone, so the
+    report is per file rather than one verdict for the lot."""
+    text = shell.out("tg get @durov")
+    assert "photo.jpg" in text and "notes.pdf" in text
+    assert "did not arrive" in text
+    assert "1 of 2 saved" in text
+
+
+def test_get_passes_the_directory_it_was_given(shell, tmp_path):
+    shell("tg get @durov -n 5 --out %s" % tmp_path)
+    peer, limit, target = shell.messaging.downloads[-1]
+    assert (peer, limit) == (2001, 5)
+    assert target == str(tmp_path)
+
+
+def test_get_defaults_to_here(shell):
+    shell("tg get @durov")
+    assert shell.messaging.downloads[-1][2] == shell.home
+
+
+def test_get_with_nothing_attached_says_so(shell):
+    shell.messaging.attachments = []
+    assert "nothing attached" in shell.out("tg get @durov")
+
+
+def test_get_needs_a_chat(shell):
+    assert shell("tg get").code != 0
+
+
+def test_saving_files_goes_through_policy(shell):
+    seen = []
+    original = policy_module.check
+
+    def spy(action, detail="", assume_yes=False):
+        seen.append(action)
+        return original(action, detail, assume_yes)
+
+    policy_module.check = spy
+    try:
+        shell("tg get @durov")
+    finally:
+        policy_module.check = original
+    assert policy_module.FS_WRITE in seen
+
+
+def test_sizes_read_the_way_a_person_says_them():
+    from extcli_src.shell.builtins.tg import _size
+
+    assert _size(512) == "512 B"
+    assert _size(2048) == "2.0 KB"
+    assert _size(5 * 1024 * 1024) == "5.0 MB"

@@ -184,10 +184,81 @@ class ReadCommand(Command):
         return SendCommand().complete(ctx, args)
 
 
+class GetCommand(Command):
+    """`tg get <chat>` — the attachments, as files.
+
+    The other half of `tg read`. Once a chat's pictures and documents are in a
+    directory they are ordinary files, and everything in the container can
+    have them: `tg get @chat -n 50 --out shots && mogrify -resize 50% shots/*`.
+
+    A record per attachment rather than one verdict for the batch: on a phone
+    some of them arriving and some not is the ordinary outcome.
+    """
+
+    name = "get"
+    summary = "save a chat's attachments as files"
+    usage = "tg get <chat> [-n <count>] [--out <dir>]"
+    mutating = True
+
+    def run(self, ctx, args):
+        flags = parse_flags(args, {"-n": "int", "--count": "int",
+                                   "--out": "str", "-o": "str",
+                                   "--before": "int"})
+        if not flags.positional:
+            raise CommandError("tg get needs a chat", hint=self.usage)
+        count = flags.get("-n", flags.get("--count", DEFAULT_COUNT))
+        if count < 1:
+            raise CommandError("-n needs a positive count")
+        peer = _resolve(ctx, " ".join(flags.positional))
+
+        wanted = flags.get("--out", flags.get("-o", "."))
+        env = getattr(ctx, "env", None)
+        target = env.host(wanted) if env is not None else wanted
+
+        policy = ctx.services.policy
+        if policy is not None:
+            policy.require(policy.FS_WRITE, "save attachments into %s" % wanted,
+                           assume_yes=ctx.assume_yes)
+
+        saved = ctx.require("messaging").download(
+            peer.id, limit=count, before=flags.get("--before", 0),
+            target=target)
+        if not saved:
+            return blocks.summary("nothing attached in the last %d messages"
+                                  % count)
+        rows = []
+        for record in saved:
+            rows.append((record.get("name") or "?",
+                         _size(record.get("size") or 0) if record.get("ok")
+                         else (record.get("detail") or "failed"),
+                         "on" if record.get("ok") else "off"))
+        done = [r for r in saved if r.get("ok")]
+        total = sum(r.get("size") or 0 for r in done)
+        return blocks.Result([
+            blocks.Items(rows),
+            blocks.Summary("%d of %d saved into %s%s"
+                           % (len(done), len(saved), wanted,
+                              ", %s" % _size(total) if total else "")),
+        ])
+
+    def complete(self, ctx, args):
+        return SendCommand().complete(ctx, args)
+
+
+def _size(count):
+    """Bytes as somebody would say them out loud."""
+    value = float(count)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return "%d %s" % (value, unit) if unit == "B" else "%.1f %s" % (value, unit)
+        value /= 1024
+
+
 def build():
     return Group("tg", "the client: chats, and writing to them", [
         SendCommand(),
         ReadCommand(),
+        GetCommand(),
         ChatsCommand(),
         IdCommand(),
     ])

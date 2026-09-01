@@ -373,12 +373,11 @@ def _as_message(controller, raw):
     }
 
 
-def history(peer_id, limit=20, before=0):
-    """The last messages of a chat, oldest first.
+def _raw_history(peer_id, limit=20, before=0):
+    """The messages as the client holds them, oldest first.
 
-    Oldest first because that is reading order, and because a shell pipes what
-    it is given: `tg read | tail` should be the end of the conversation, the
-    way `cat` and `tail` agree about a file.
+    Kept inside this module: a TL message is a Java object, and letting one
+    past here is what would make everything above need a device.
     """
     controller = _controller()
     if controller is None:
@@ -402,11 +401,151 @@ def history(peer_id, limit=20, before=0):
         log.log("messaging: getHistory said %s" % error, debug=True)
     if response is None:
         return []
+    raw = list(reflect.java_list_items(reflect.get_field(response, "messages")))
+    raw.reverse()
+    return raw
+
+
+def history(peer_id, limit=20, before=0):
+    """The last messages of a chat, oldest first, as plain data.
+
+    Oldest first because that is reading order, and because a shell pipes what
+    it is given: `tg read | tail` should be the end of the conversation, the
+    way `cat` and `tail` agree about a file.
+    """
+    controller = _controller()
+    if controller is None:
+        return []
     out = []
-    for raw in reflect.java_list_items(reflect.get_field(response, "messages")):
+    for raw in _raw_history(peer_id, limit, before):
         try:
             out.append(_as_message(controller, raw))
         except Exception as e:
             log.log("messaging: skipped a message: %s" % e, debug=True)
-    out.reverse()
+    return out
+
+
+# --------------------------------------------------------------- attachments
+
+# How long one file may take before the console stops waiting for it. Long,
+# because it is a download over somebody's mobile signal, and the alternative
+# to waiting is a file that arrives after the command has said it did not.
+DOWNLOAD_TIMEOUT = 120
+
+# How often the loader is asked whether the file has landed. Polling because
+# the loader reports through the client's notification centre, and subscribing
+# to that from here would mean holding a Java listener alive across threads for
+# the sake of a progress bar nobody asked for.
+POLL_SECONDS = 0.4
+
+
+def _attachment_name(raw, message_id):
+    """What to call the file on disk.
+
+    A document carries its own name and that is what somebody expects to see.
+    A photo carries none, so it is named after the message it came from —
+    unique, and it says where to look if the picture turns out to be the wrong
+    one.
+    """
+    document = reflect.get_field(raw, "media")
+    document = reflect.get_field(document, "document") if document else None
+    if document is not None:
+        for attribute in reflect.java_list_items(
+                reflect.get_field(document, "attributes")):
+            name = reflect.get_field(attribute, "file_name")
+            if name:
+                return str(name)
+    return "%d.jpg" % int(message_id)
+
+
+def _local_path(raw):
+    """Where the client already keeps this message's file, if anywhere."""
+    import os
+
+    attach = reflect.get_field(raw, "attachPath")
+    if attach and os.path.isfile(str(attach)):
+        return str(attach)
+    try:
+        from org.telegram.messenger import FileLoader
+
+        loader = FileLoader.getInstance(int(account() or 0))
+        found = reflect.try_call(loader, ["getPathToMessage"], raw,
+                                 key="loader.path", default=None)
+        if found is not None:
+            path = str(found.getAbsolutePath())
+            return path if os.path.isfile(path) else None
+    except Exception as e:
+        log.log("messaging: cannot locate the file: %s" % e, debug=True)
+    return None
+
+
+def _ask_for(raw):
+    """Tells the client to fetch a message's file. Says whether it could ask."""
+    try:
+        from org.telegram.messenger import FileLoader
+
+        loader = FileLoader.getInstance(int(account() or 0))
+        result = reflect.try_call(
+            loader, ["loadFile", "loadFileFromMessage", "loadMessageFile"],
+            raw, key="loader.load", default="__missing__")
+        return result != "__missing__"
+    except Exception as e:
+        log.log("messaging: cannot ask for the file: %s" % e, debug=True)
+        return False
+
+
+def _wait_for_file(raw, timeout):
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        path = _local_path(raw)
+        if path:
+            return path
+        time.sleep(POLL_SECONDS)
+    return None
+
+
+def download(peer_id, limit=20, before=0, target=".",
+             timeout=DOWNLOAD_TIMEOUT):
+    """Saves the attachments of the last messages into `target`.
+
+    Returns a record per attachment, so the command can report what happened
+    to each one rather than one verdict for the lot: on a phone, some of a
+    batch arriving is the normal outcome, not a failure.
+    """
+    import os
+    import shutil
+
+    controller = _controller()
+    if controller is None:
+        return []
+    out = []
+    for raw in _raw_history(peer_id, limit, before):
+        if reflect.get_field(raw, "media") is None:
+            continue
+        message_id = int(reflect.get_field(raw, "id") or 0)
+        name = _attachment_name(raw, message_id)
+        record = {"id": message_id, "name": name, "path": None,
+                  "size": 0, "ok": False, "detail": ""}
+        source = _local_path(raw)
+        if source is None:
+            if not _ask_for(raw):
+                record["detail"] = "the client would not fetch it"
+                out.append(record)
+                continue
+            source = _wait_for_file(raw, timeout)
+        if source is None:
+            record["detail"] = "did not arrive within %ss" % timeout
+            out.append(record)
+            continue
+        try:
+            os.makedirs(str(target), exist_ok=True)
+            destination = os.path.join(str(target), name)
+            shutil.copyfile(source, destination)
+            record.update(path=destination, ok=True,
+                          size=os.path.getsize(destination))
+        except Exception as e:
+            record["detail"] = "%s: %s" % (type(e).__name__, e)
+        out.append(record)
     return out
