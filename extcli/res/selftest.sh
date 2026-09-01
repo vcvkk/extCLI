@@ -136,6 +136,8 @@ check df
 echo ""
 echo "chats"
 check tg chats JettaXP
+check tg read $chat -n 3
+check tg read $chat -n 3 --oneline
 check tg id $chat
 check tg send $chat extCLI self-test: text
 check tg send $chat --file probe.txt extCLI self-test: file

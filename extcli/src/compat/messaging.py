@@ -283,3 +283,130 @@ def send_photo(peer_id, path, caption=None, high_quality=True, parse_mode=None):
     except Exception as e:
         log.error("messaging: send_photo failed", e)
         return False, "%s: %s" % (type(e).__name__, e)
+
+
+# ------------------------------------------------------------------- reading
+
+# How long a history request may take before the console gives up on it. The
+# request goes to Telegram, so the limit is somebody's mobile signal rather
+# than anything this code does.
+HISTORY_TIMEOUT = 20
+
+# What one call may ask for. Telegram's own ceiling is 100 per request, and a
+# console showing more than that at once is not being read anyway.
+HISTORY_MAX = 100
+
+
+def _await_request(request, timeout=HISTORY_TIMEOUT):
+    """Sends a TL request and waits for the answer. (response, error)."""
+    import threading
+
+    done = threading.Event()
+    box = {}
+
+    def answered(response=None, error=None):
+        box["response"] = response
+        box["error"] = error
+        done.set()
+
+    try:
+        _call("send_request")([
+            ((request, answered), {}),
+            ((request, answered, account()), {}),
+        ])
+    except Exception as e:
+        log.error("messaging: cannot send the request", e)
+        return None, "%s: %s" % (type(e).__name__, e)
+    if not done.wait(timeout):
+        return None, "timed out after %ss" % timeout
+    return box.get("response"), box.get("error")
+
+
+def _author_of(controller, raw):
+    """Who wrote a message, as a Peer, or None when it does not say.
+
+    A channel post has no author, and a message from a user carries a peer
+    rather than an id — the field is `from_id.user_id` and not `from_id`.
+    """
+    from_id = reflect.get_field(raw, "from_id")
+    if from_id is None:
+        return None
+    for field, sign in (("user_id", 1), ("chat_id", -1), ("channel_id", -1)):
+        value = reflect.get_field(from_id, field)
+        if value:
+            return _peer_from_id(controller, sign * int(value))
+    return None
+
+
+def _media_kind(raw):
+    """A word for what is attached, or None. The class name is the honest
+    answer: TL_messageMediaPhoto is a photo however this client renders it."""
+    media = reflect.get_field(raw, "media")
+    if media is None:
+        return None
+    try:
+        name = str(media.getClass().getSimpleName())
+    except Exception:
+        return "media"
+    for prefix in ("TL_messageMedia", "TLRPC$TL_messageMedia"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    return name.lower() or "media"
+
+
+def _as_message(controller, raw):
+    """One message as plain data.
+
+    Everything above this module works on these dicts, so the shape is the
+    boundary: no Java object gets past here, and the command and its tests
+    never need a device.
+    """
+    author = _author_of(controller, raw)
+    return {
+        "id": int(reflect.get_field(raw, "id") or 0),
+        "date": int(reflect.get_field(raw, "date") or 0),
+        "text": str(reflect.get_field(raw, "message") or ""),
+        "author": author.title if author is not None else None,
+        "author_id": author.id if author is not None else None,
+        "out": bool(reflect.get_field(raw, "out")),
+        "media": _media_kind(raw),
+    }
+
+
+def history(peer_id, limit=20, before=0):
+    """The last messages of a chat, oldest first.
+
+    Oldest first because that is reading order, and because a shell pipes what
+    it is given: `tg read | tail` should be the end of the conversation, the
+    way `cat` and `tail` agree about a file.
+    """
+    controller = _controller()
+    if controller is None:
+        return []
+    try:
+        from org.telegram.tgnet import TLRPC
+    except Exception as e:
+        log.error("messaging: TLRPC is not available here", e)
+        return []
+    try:
+        request = TLRPC.TL_messages_getHistory()
+        request.peer = controller.getInputPeer(int(peer_id))
+        request.limit = max(1, min(int(limit), HISTORY_MAX))
+        request.offset_id = int(before)
+    except Exception as e:
+        log.error("messaging: cannot build the history request", e)
+        return []
+
+    response, error = _await_request(request)
+    if error is not None:
+        log.log("messaging: getHistory said %s" % error, debug=True)
+    if response is None:
+        return []
+    out = []
+    for raw in reflect.java_list_items(reflect.get_field(response, "messages")):
+        try:
+            out.append(_as_message(controller, raw))
+        except Exception as e:
+            log.log("messaging: skipped a message: %s" % e, debug=True)
+    out.reverse()
+    return out

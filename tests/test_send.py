@@ -22,6 +22,9 @@ from extcli_src.shell.env import Env
 
 SELF_ID = 1000
 
+# a fixed point in time; the tests never assert the clock, only the shape
+DAY_ONE = 1785600000
+
 
 class FakePeer(object):
     def __init__(self, peer_id, title, username=None, kind="user"):
@@ -55,6 +58,19 @@ class FakeMessaging(object):
             FakePeer(-3001, "extCLI testing", kind="chat"),
         ]
         self.sent = []
+        self.reads = []
+        # two days apart, so the day separator has to appear twice whatever
+        # timezone the tests run in
+        self.messages = [
+            {"id": 10, "date": DAY_ONE, "text": "first thing",
+             "author": "Pavel Durov", "author_id": 2001, "out": False,
+             "media": None},
+            {"id": 11, "date": DAY_ONE + 60, "text": "two\nlines",
+             "author": None, "author_id": None, "out": True, "media": None},
+            {"id": 12, "date": DAY_ONE + 172800, "text": "",
+             "author": "Pavel Durov", "author_id": 2001, "out": False,
+             "media": "photo"},
+        ]
 
     def dialogs(self, limit=200):
         return list(self.peers)[:limit]
@@ -103,6 +119,10 @@ class FakeMessaging(object):
                    parse_mode=None):
         self.sent.append(("photo", peer_id, path, caption))
         return True, "sent %s" % path
+
+    def history(self, peer_id, limit=20, before=0):
+        self.reads.append((peer_id, limit, before))
+        return list(self.messages)[-limit:]
 
 
 @pytest.fixture
@@ -297,10 +317,11 @@ def test_completion_offers_chats(shell):
     assert any("durov" in name for name in candidates)
 
 
-def test_the_three_are_separate_commands(shell):
-    """Finding a chat and writing to one are different acts, and no argument
-    should quietly turn one into the other."""
-    assert set(shell.ctx.registry.get("tg").subcommands) == {"send", "chats", "id"}
+def test_the_commands_are_separate_acts(shell):
+    """Finding a chat, reading one and writing to one are different things,
+    and no argument should quietly turn one into another."""
+    assert set(shell.ctx.registry.get("tg").subcommands) == {
+        "send", "read", "chats", "id"}
     assert shell("tg send search durov").code != 0
 
 
@@ -379,3 +400,127 @@ def test_when_no_form_works_the_last_error_surfaces():
     call = messaging.Call("send_text", Recorder(accepts=9))
     with pytest.raises(TypeError):
         call([((1, "hi"), {})])
+
+
+# ------------------------------------------------------------------- reading
+
+def test_read_prints_the_conversation(shell):
+    text = shell.out("tg read @durov")
+    assert "first thing" in text
+    assert "Pavel Durov" in text
+    # a message of your own is yours, not a peer with no name
+    assert "you" in text
+
+
+def test_read_asks_for_what_was_asked_for(shell):
+    shell("tg read @durov -n 5")
+    assert shell.messaging.reads[-1] == (2001, 5, 0)
+
+
+def test_read_defaults_to_a_screenful(shell):
+    from extcli_src.shell.builtins import tg
+
+    shell("tg read @durov")
+    assert shell.messaging.reads[-1][1] == tg.DEFAULT_COUNT
+
+
+def test_read_refuses_a_count_of_nothing(shell):
+    assert shell("tg read @durov -n 0").code != 0
+
+
+def test_read_needs_a_chat(shell):
+    result = shell("tg read")
+    assert result.code != 0
+    assert "needs a chat" in result.blocks[0].message
+
+
+def test_read_of_an_unknown_chat_says_where_to_look(shell):
+    result = shell("tg read @nobody")
+    assert result.code != 0
+    assert "tg chats" in (result.blocks[0].hint or "")
+
+
+def test_read_of_an_empty_chat_says_so(shell):
+    shell.messaging.messages = []
+    assert "nothing to read" in shell.out("tg read @durov")
+
+
+def test_the_day_is_printed_when_it_turns(shell):
+    """A timestamp on every line is thirty characters of the same thing on a
+    screen forty wide; the day is the part that changes."""
+    import re
+
+    lines = shell.out("tg read @durov").splitlines()
+    days = [line for line in lines if re.fullmatch(r"\d{4}-\d{2}-\d{2}", line.strip())]
+    assert len(days) == 2, "two days in the fixture, two separators"
+
+
+def test_an_attachment_is_named(shell):
+    assert "[photo]" in shell.out("tg read @durov")
+
+
+# --------------------------------------------------------- forms for a pipe
+
+def test_oneline_is_one_line_for_each_message(shell):
+    """Otherwise grep answers with half a message and the rest is elsewhere."""
+    lines = [l for l in shell.out("tg read @durov --oneline").splitlines() if l.strip()]
+    assert len(lines) == 3
+    # the message that has a newline in it is still one line here
+    assert any("two lines" in line for line in lines)
+
+
+def test_oneline_carries_what_you_would_grep_for(shell):
+    line = [l for l in shell.out("tg read @durov --oneline").splitlines()
+            if "first thing" in l][0]
+    assert "10" in line and "Pavel Durov" in line
+
+
+def test_json_is_one_object_per_line(shell):
+    import json
+
+    lines = [l for l in shell.out("tg read @durov --json").splitlines() if l.strip()]
+    assert len(lines) == 3
+    first = json.loads(lines[0])
+    assert first["id"] == 10 and first["text"] == "first thing"
+    # the newline survives json where --oneline flattens it
+    assert json.loads(lines[1])["text"] == "two\nlines"
+
+
+def test_the_two_pipe_forms_are_not_asked_for_together(shell):
+    result = shell("tg read @durov --oneline --json")
+    assert result.code != 0
+    assert "either" in result.blocks[0].message
+
+
+def test_reading_is_oldest_first(shell):
+    """`tg read | tail` should be the end of the conversation, the way it is
+    the end of a file."""
+    import json
+
+    ids = [json.loads(l)["id"]
+           for l in shell.out("tg read @durov --json").splitlines() if l.strip()]
+    assert ids == sorted(ids)
+
+
+def test_the_whole_point_of_the_thing(tmp_path):
+    """`tg read @chat | grep ...` — a conversation as a stream.
+
+    The screen wraps a long line because it is forty columns wide, but what
+    goes into a pipe is `render.plain`, which does not. If that ever changed,
+    grep would be matching against halves of messages.
+    """
+    from extcli_src.backends.chain import ChainBackend
+    from extcli_src.backends.inproc import InprocBackend
+
+    messaging = FakeMessaging()
+    ctx = Context(
+        services=Services(messaging=messaging, policy=policy_module),
+        registry=build_registry(),
+        env=Env(cwd=str(tmp_path), home=str(tmp_path)),
+        width=40,
+        backend=ChainBackend([InprocBackend()]),
+    )
+    result = dispatch.run_line("tg read @durov --oneline | grep 'first thing'", ctx)
+    lines = [line for line in plain.text(result).splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert lines[0].startswith("10 ")
