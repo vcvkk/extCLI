@@ -118,7 +118,7 @@ def _prepare_rootfs(plugin):
     """Unpacks and measures whatever is not ready yet.
 
     Everything this does was a command the user had to know to run — `rootfs
-    syscalls`, `rootfs install alpine`, `rootfs launch`, `rootfs writes` — and
+    syscalls`, `rootfs install alpine`, `rootfs probe launch`, `rootfs probe writes` — and
     somebody who has just installed a plugin has heard of none of them. It runs
     once: the second load finds nothing to do and says nothing.
 

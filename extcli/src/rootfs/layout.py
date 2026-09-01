@@ -113,7 +113,7 @@ def resolve(root, guest_path, max_links=MAX_LINKS):
     A rootfs is full of absolute symlinks — Alpine's `/bin/sh` points at
     `/bin/busybox` — and inside the rootfs that is correct. Resolved by the
     host, the same link leads out of the rootfs to a file on the phone that
-    does not exist, which is exactly how `rootfs launch` came back with
+    does not exist, which is exactly how `rootfs probe launch` came back with
     "unable to open file .../rootfs/bin/sh". So absolute targets are followed
     from the rootfs, not from /.
 

@@ -367,16 +367,16 @@ def test_host_paths_marks_missing():
     assert "missing" in text
 
 
-def test_host_doctor_reports_backends_and_rootfs():
-    text = "\n".join(rendered(make_ctx(), "host doctor"))
+def test_host_check_reports_backends_and_rootfs():
+    text = "\n".join(rendered(make_ctx(), "host check"))
     assert "system, inproc" in text
     assert "not available" in text
     assert "renderer" in text
 
 
-def test_host_doctor_refresh_forces_a_new_probe():
+def test_host_check_refresh_forces_a_new_probe():
     ctx = make_ctx()
-    run(ctx, "host doctor --refresh")
+    run(ctx, "host check --refresh")
     assert ctx.services.probe.forced == 1
 
 
@@ -532,24 +532,24 @@ def test_history_rejects_a_word_where_a_count_goes():
     assert run(ctx, "history sideways").code != 0
 
 
-def test_host_window_needs_a_console():
+def test_the_window_report_needs_a_console():
     ctx = make_ctx()
-    result = run(ctx, "host window")
+    result = run(ctx, "host check --window")
     assert result.code != 0
     assert "not available here" in result.blocks[0].message
 
 
-def test_host_window_reports_what_the_console_says():
+def test_the_window_report_says_what_the_console_says():
     class FakeConsole(object):
         def describe_window(self):
             return [("decor", "1080 x 2400"), ("display", "1080 x 2400")]
 
     ctx = make_ctx(terminal=FakeConsole())
-    text = "\n".join(rendered(ctx, "host window"))
+    text = "\n".join(rendered(ctx, "host check --window"))
     assert "1080 x 2400" in text and "decor" in text
 
 
-def test_copy_puts_the_scrollback_on_the_clipboard():
+def test_clip_puts_the_scrollback_on_the_clipboard():
     class FakeConsole(object):
         def __init__(self):
             self.copied = 0
@@ -560,41 +560,41 @@ def test_copy_puts_the_scrollback_on_the_clipboard():
 
     console = FakeConsole()
     ctx = make_ctx(terminal=console)
-    text = "\n".join(rendered(ctx, "copy"))
+    text = "\n".join(rendered(ctx, "clip"))
     assert console.copied == 1
     assert "42 lines" in text
 
 
-def test_copy_without_a_console_says_so():
+def test_clip_without_a_console_says_so():
     ctx = make_ctx()
-    result = run(ctx, "copy")
+    result = run(ctx, "clip")
     assert result.code != 0
     assert "not available here" in result.blocks[0].message
 
 
 def test_the_self_test_script_is_bundled_and_runnable():
-    """`host selftest` reads a plain file; if it stops shipping, say so."""
+    """`host check --self` reads a plain file; if it stops shipping, say so."""
     import os
 
-    from extcli_src.shell.builtins.host import SelfTestCommand
+    from extcli_src.shell.builtins.host import CheckCommand
 
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "extcli", "res")
-    path = os.path.join(root, SelfTestCommand.SCRIPT)
+    path = os.path.join(root, CheckCommand.SCRIPT)
     assert os.path.isfile(path), "the self-test script is not in res/"
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
     # it must not write anywhere but the one chat named at the top
     assert 'chat="@JettaXP"' in text
     sends = [line.strip() for line in text.splitlines()
-             if line.strip().startswith("check send")]
+             if line.strip().startswith("check tg send")]
     assert sends and all("$chat" in line for line in sends)
 
 
 def test_self_test_needs_a_shell_to_run_in():
     ctx = make_ctx()
     ctx.run_script_text = None
-    result = run(ctx, "host selftest")
+    result = run(ctx, "host check --self")
     assert result.code != 0
 
 

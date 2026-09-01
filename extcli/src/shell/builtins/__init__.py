@@ -9,10 +9,9 @@ from . import host as host_cmd
 from . import log as log_cmd
 from . import plugin as plugin_cmd
 from . import rootfs as rootfs_cmd
-from . import search as search_cmd
-from . import send as send_cmd
 from . import session as session_cmd
 from . import shellcmds
+from . import tg as tg_cmd
 
 
 def build_registry():
@@ -22,8 +21,7 @@ def build_registry():
     registry.register(config_cmd.build())
     registry.register(plugin_cmd.build(), aliases=("plugins",))
     registry.register(log_cmd.build())
-    registry.register(send_cmd.build())
-    registry.register(search_cmd.build())
+    registry.register(tg_cmd.build())
     registry.register(rootfs_cmd.build())
     for command in session_cmd.build_all():
         registry.register(command)

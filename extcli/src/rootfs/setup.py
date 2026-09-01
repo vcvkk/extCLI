@@ -2,8 +2,8 @@
 
 """Getting a rootfs ready without being asked.
 
-Everything here was a command the user had to know to run: `rootfs syscalls`,
-`rootfs install alpine`, `rootfs launch`, `rootfs writes`. Each of them exists
+Everything here was a command the user had to know to run: `rootfs probe syscalls`,
+`rootfs install alpine`, `rootfs probe launch`, `rootfs probe writes`. Each of them exists
 because the answer is a measurement rather than an assumption, and none of them
 is something a person installing a plugin should have to have heard of. So they
 run themselves, once, in the background, and `apk` works the first time the

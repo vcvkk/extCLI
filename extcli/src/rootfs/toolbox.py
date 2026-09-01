@@ -256,7 +256,7 @@ def _runner(res_dir, state_dir, root, abi, linker):
 
 
 def describe(root, selection=None):
-    """Rows for `rootfs tools`: what each group is, and what is there."""
+    """Rows for `rootfs pkg`: what each group is, and what is there."""
     rows = []
     for item in packages.GROUPS:
         missing = [name for name in item.names

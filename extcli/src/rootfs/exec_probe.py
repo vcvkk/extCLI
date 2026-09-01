@@ -195,7 +195,7 @@ LABELS = {
 
 
 def summary_lines(results):
-    """The matrix, for `rootfs check`."""
+    """The matrix, for `rootfs probe exec`."""
     marks = {OK: "+", BLOCKED: "x", UNKNOWN: "?"}
     lines = []
     for name in (CONTROL,) + QUESTIONS:

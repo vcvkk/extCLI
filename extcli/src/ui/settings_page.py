@@ -146,7 +146,7 @@ def install_tools(selection):
     words = selection.command_words()
     if not words:
         return
-    command = "rootfs tools add " + " ".join(words)
+    command = "rootfs pkg add " + " ".join(words)
     from .. import main
     from ..compat import store
 

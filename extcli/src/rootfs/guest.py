@@ -267,7 +267,7 @@ def diagnose(results):
     if any("sigsys" in detail(strategy) for strategy in ORDER):
         return SANDBOX, (
             "the guest started and the sandbox refused one of its syscalls. "
-            "`rootfs syscalls` lists what this app is allowed to call")
+            "`rootfs probe syscalls` lists what this app is allowed to call")
     crashed = any("killed by" in detail(strategy) for strategy in ORDER)
     if crashed:
         return FOREIGN_LIBC, (

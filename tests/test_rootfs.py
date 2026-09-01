@@ -935,7 +935,7 @@ def test_an_absolute_symlink_stays_inside_the_rootfs(tmp_path):
     """The bug the device found.
 
     Alpine's /bin/sh points at /bin/busybox. Resolved by the host that is a
-    file on the phone which does not exist, and `rootfs launch` came back with
+    file on the phone which does not exist, and `rootfs probe launch` came back with
     "unable to open file .../rootfs/bin/sh". Inside the rootfs it is correct,
     so it has to be followed from the rootfs.
     """
@@ -1447,7 +1447,7 @@ def test_sigsys_is_not_read_as_a_crash():
     })
     assert kind == guest.SANDBOX
     assert "sandbox refused one of its syscalls" in sentence
-    assert "rootfs syscalls" in sentence
+    assert "rootfs probe syscalls" in sentence
 
 
 def test_a_plain_crash_still_reads_as_a_foreign_libc():

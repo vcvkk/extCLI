@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""`send` — put something in a chat from the console.
+"""`tg send` — put something in a chat from the console.
 
-One command, one job: `send <chat> <text>`, or `send <chat> --photo <path>`
-with the rest of the line as the caption. Looking chats up is `search`, which
-is a separate command because finding a chat and writing to one are separate
-things — and because a lookup that lives inside `send` reads as if it might
-send something.
+One command, one job: `tg send <chat> <text>`, or `tg send <chat> --photo
+<path>` with the rest of the line as the caption. Looking chats up is
+`tg chats`, which is a separate command because finding a chat and writing to
+one are separate things — and because a lookup that lives inside a send reads
+as if it might send something.
 
 Destinations are resolved against chats the client has already loaded, so a
 typo cannot silently reach a stranger: an ambiguous name is an error listing
@@ -40,7 +40,7 @@ def _resolve(ctx, query):
     try:
         return _messaging(ctx).resolve(query)
     except LookupError as e:
-        raise CommandError(str(e), hint="try `search %s` to find the chat" % query)
+        raise CommandError(str(e), hint="try `tg chats %s` to find the chat" % query)
 
 
 def _check_policy(ctx, peer, detail):
@@ -55,24 +55,24 @@ def _check_policy(ctx, peer, detail):
 class SendCommand(Command):
     name = "send"
     summary = "send a message, photo or file to a chat"
-    usage = ("send <chat> <text>\n"
-             "send <chat> --photo <path> [caption]\n"
-             "send <chat> --file <path> [caption]")
+    usage = ("tg send <chat> <text>\n"
+             "tg send <chat> --photo <path> [caption]\n"
+             "tg send <chat> --file <path> [caption]")
     mutating = True
 
     def run(self, ctx, args):
         if not args:
-            raise CommandError("send needs a destination", hint=self.usage)
+            raise CommandError("tg send needs a destination", hint=self.usage)
         flags = parse_flags(args, FLAGS)
         if not flags.positional:
-            raise CommandError("send needs a destination", hint=self.usage)
+            raise CommandError("tg send needs a destination", hint=self.usage)
 
         peer = _resolve(ctx, flags.positional[0])
         rest = " ".join(flags.positional[1:])
         photo = flags.get("--photo")
         document = flags.get("--file") or flags.get("--document")
         if photo and document:
-            raise CommandError("send takes either --photo or --file, not both")
+            raise CommandError("tg send takes either --photo or --file, not both")
         if photo or document:
             # anything left on the line is the caption, so both of these work:
             #   send me --photo shot.png look at this
@@ -81,8 +81,8 @@ class SendCommand(Command):
             return self._send_file(ctx, peer, photo or document,
                                    caption, as_photo=bool(photo))
         if not rest:
-            raise CommandError("send needs a message",
-                               hint="send <chat> <text>, or --photo/--file")
+            raise CommandError("tg send needs a message",
+                               hint="tg send <chat> <text>, or --photo/--file")
         return self._send_text(ctx, peer, rest, flags)
 
     def _send_text(self, ctx, peer, text, flags):
@@ -91,7 +91,7 @@ class SendCommand(Command):
         ok, detail = _messaging(ctx).send_text(peer.id, text,
                                                "markdown" if markdown else None)
         if not ok:
-            raise CommandError("send failed: %s" % detail)
+            raise CommandError("tg send failed: %s" % detail)
         return blocks.summary("sent to %s" % peer.label(), role=blocks.SUCCESS)
 
     def _send_file(self, ctx, peer, raw, caption, as_photo):
@@ -107,7 +107,7 @@ class SendCommand(Command):
         else:
             ok, detail = messaging.send_document(peer.id, path, caption)
         if not ok:
-            raise CommandError("send failed: %s" % detail)
+            raise CommandError("tg send failed: %s" % detail)
         return blocks.summary(
             "sent %s (%d bytes) to %s" % (os.path.basename(path),
                                           os.path.getsize(path), peer.label()),
@@ -127,6 +127,3 @@ class SendCommand(Command):
             return []
         return [name for name in names if name.startswith(prefix)]
 
-
-def build():
-    return SendCommand()

@@ -12,7 +12,7 @@ What is being pinned is the one rule that is easy to state and easy to get
 wrong: a rootfs is full of absolute symlinks, Alpine's /bin/sh points at
 /bin/busybox, and inside the rootfs that is correct. Resolved by the host it
 leads out of the rootfs to a file that does not exist, which is exactly how
-`rootfs launch` once came back with "unable to open file .../rootfs/bin/sh".
+`rootfs probe launch` once came back with "unable to open file .../rootfs/bin/sh".
 """
 
 import os

@@ -207,7 +207,7 @@ class Terminal:
     def describe(self):
         """Renderer state in one line: mode, grid size, cell size, line count.
 
-        Printed by the console's status line and by `host doctor`, so an empty
+        Printed by the console's status line and by `host check`, so an empty
         screen can be told apart from an empty scrollback.
         """
         try:

@@ -228,7 +228,7 @@ class RootfsBackend(object):
     def describe(self):
         if not self.available():
             reason = "not installed" if not layout.installed(self.root) else (
-                "no launch strategy — run `rootfs launch`")
+                "no launch strategy — run `rootfs probe launch`")
             return [("state", reason)]
         return [
             ("root", self.root),

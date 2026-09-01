@@ -4,7 +4,7 @@
 
 Android answers a refused syscall with SECCOMP_RET_KILL_PROCESS. Not an error —
 death, and not even a legible one: the number cannot be read from inside the
-process that asked, which is why `rootfs syscalls` asks from outside, a forked
+process that asked, which is why `rootfs probe syscalls` asks from outside, a forked
 child per number.
 
 `rootfs trace` then showed which of them Alpine actually reaches. busybox drops

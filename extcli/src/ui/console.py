@@ -119,7 +119,7 @@ class ConsoleSession(object):
         self.palette = current_palette()
         self.registry = build_registry()
         self.services = services_module.build(plugin)
-        # `host window` asks the console about itself; going through Services
+        # `host check --window` asks the console about itself; going through Services
         # is what keeps shell/ from importing ui/
         self.services.terminal = self
         self.backend = self._build_backends()
@@ -1338,7 +1338,7 @@ class ConsoleSession(object):
     # ---------------------------------------------------------- diagnostics
 
     def describe_window(self):
-        """What `host window` prints: the window as it actually turned out.
+        """What `host check --window` prints: the window as it actually turned out.
 
         Two rounds of fixing the strip behind the navigation bar were guesses
         made without being able to see the result. This makes the device

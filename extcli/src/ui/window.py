@@ -138,7 +138,7 @@ def inset_by_hand(root):
             try:
                 values = padding_for(insets)
                 view.setPadding(*values)
-                # kept for `host window`: the numbers the system handed us
+                # kept for `host check --window`: the numbers the system handed us
                 view.setTag(_TAG, "insets %d,%d,%d,%d" % values)
             except Exception as e:
                 log.error("window: cannot apply insets", e)
@@ -210,7 +210,7 @@ def _prepare(dialog, palette):
 # ---------------------------------------------------------------- diagnostics
 
 def describe(dialog, root=None):
-    """Rows for `host window`: what the window actually turned out to be.
+    """Rows for `host check --window`: what the window actually turned out to be.
 
     Written because two rounds of fixing the navigation bar strip were guesses.
     The question is narrow — is the window as tall as the display, or does it

@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""`send` and `search` — putting something in a chat, and finding one.
+"""`tg send` and the lookups — putting something in a chat, and finding one.
 
 The rule that matters here: a destination is resolved against chats the client
 already has, and an ambiguous one is refused. Guessing would mean a typo can
 deliver a message to the wrong person, which is not a mistake a console should
 be able to make quietly.
 
-They are two commands rather than one with subcommands, so `send` never does
+They are separate commands rather than one with flags, so `tg send` never does
 anything but send.
 """
 
@@ -129,93 +129,93 @@ def shell(tmp_path):
 # ----------------------------------------------------------------- resolving
 
 def test_send_to_saved_messages(shell):
-    assert shell("send me hello").ok
+    assert shell("tg send me hello").ok
     assert shell.messaging.sent == [("text", SELF_ID, "hello", None)]
 
 
 def test_send_by_exact_username(shell):
-    shell("send @durov hi there")
+    shell("tg send @durov hi there")
     assert shell.messaging.sent[-1][:3] == ("text", 2001, "hi there")
 
 
 def test_send_by_numeric_id(shell):
-    shell("send 2002 direct")
+    shell("tg send 2002 direct")
     assert shell.messaging.sent[-1][1] == 2002
 
 
 def test_ambiguous_destination_is_refused(shell):
     # "duro" matches two titles and no username exactly
-    result = shell("send duro something")
+    result = shell("tg send duro something")
     assert result.code != 0
     assert "matches 2 chats" in result.blocks[0].message
-    assert "try `search" in (result.blocks[0].hint or "")
+    assert "try `tg chats" in (result.blocks[0].hint or "")
     assert shell.messaging.sent == []
 
 
 def test_an_exact_username_wins_over_a_partial_title(shell):
     # "durov" is a username and also part of "Durov's News"; the exact one wins
-    assert shell("send durov hi").ok
+    assert shell("tg send durov hi").ok
     assert shell.messaging.sent[-1][1] == 2001
 
 
 def test_unknown_destination_is_refused(shell):
-    result = shell("send @nobody hi")
+    result = shell("tg send @nobody hi")
     assert result.code != 0
     assert "no loaded chat matches" in result.blocks[0].message
     assert shell.messaging.sent == []
 
 
 def test_missing_arguments(shell):
-    result = shell("send")
+    result = shell("tg send")
     assert result.code != 0
     assert "needs a destination" in result.blocks[0].message
-    result = shell("send me")
+    result = shell("tg send me")
     assert result.code != 0
     assert "needs a message" in result.blocks[0].message
 
 
 def test_words_are_joined_into_one_message(shell):
-    shell("send me one two three")
+    shell("tg send me one two three")
     assert shell.messaging.sent[-1][2] == "one two three"
 
 
 def test_quoted_text_survives_the_shell(shell):
-    shell('send me "hello, world"')
+    shell('tg send me "hello, world"')
     assert shell.messaging.sent[-1][2] == "hello, world"
 
 
 def test_markdown_flag(shell):
-    shell("send me --markdown *bold*")
+    shell("tg send me --markdown *bold*")
     assert shell.messaging.sent[-1][3] == "markdown"
 
 
 # ------------------------------------------------------------------- lookups
 
-def test_search_lists_matches(shell):
-    text = shell.out("search durov")
+def test_chats_lists_matches(shell):
+    text = shell.out("tg chats durov")
     assert "Pavel Durov" in text and "Durov's News" in text
     assert "2 chats" in text
 
 
-def test_search_without_matches(shell):
-    assert "no loaded chat matches" in shell.out("search zzzz")
+def test_chats_without_matches(shell):
+    assert "no loaded chat matches" in shell.out("tg chats zzzz")
 
 
-def test_search_needs_a_query(shell):
-    assert shell("search").code != 0
+def test_chats_needs_a_query(shell):
+    assert shell("tg chats").code != 0
 
 
-def test_search_id_shows_the_resolved_peer(shell):
-    text = shell.out("search --id @durov")
+def test_id_shows_the_resolved_peer(shell):
+    text = shell.out("tg id @durov")
     assert "2001" in text and "durov" in text
 
 
-def test_search_id_marks_saved_messages(shell):
-    assert "Saved Messages" in shell.out("search --id me")
+def test_id_marks_saved_messages(shell):
+    assert "Saved Messages" in shell.out("tg id me")
 
 
-def test_search_id_refuses_an_ambiguous_name(shell):
-    result = shell("search --id duro")
+def test_id_refuses_an_ambiguous_name(shell):
+    result = shell("tg id duro")
     assert result.code != 0
     assert "matches 2 chats" in result.blocks[0].message
 
@@ -224,7 +224,7 @@ def test_search_id_refuses_an_ambiguous_name(shell):
 
 def test_send_file(shell):
     shell("echo content > note.txt")
-    assert shell("send me --file note.txt").ok
+    assert shell("tg send me --file note.txt").ok
     kind, peer, path, caption = shell.messaging.sent[-1]
     assert kind == "document" and peer == SELF_ID
     assert path.endswith("note.txt") and caption is None
@@ -232,7 +232,7 @@ def test_send_file(shell):
 
 def test_the_rest_of_the_line_is_the_caption(shell):
     shell("echo fake > picture.jpg")
-    shell("send @durov --photo picture.jpg look at this")
+    shell("tg send @durov --photo picture.jpg look at this")
     kind, peer, path, caption = shell.messaging.sent[-1]
     assert kind == "photo" and peer == 2001
     assert caption == "look at this"
@@ -240,25 +240,25 @@ def test_the_rest_of_the_line_is_the_caption(shell):
 
 def test_caption_can_also_be_a_flag(shell):
     shell("echo content > note.txt")
-    shell("send me --file note.txt --caption look")
+    shell("tg send me --file note.txt --caption look")
     assert shell.messaging.sent[-1][3] == "look"
 
 
 def test_send_photo(shell):
     shell("echo fake > picture.jpg")
-    shell("send me --photo picture.jpg")
+    shell("tg send me --photo picture.jpg")
     assert shell.messaging.sent[-1][0] == "photo"
 
 
 def test_a_file_and_a_photo_together_are_refused(shell):
     shell("echo fake > picture.jpg")
-    result = shell("send me --photo picture.jpg --file picture.jpg")
+    result = shell("tg send me --photo picture.jpg --file picture.jpg")
     assert result.code != 0
     assert shell.messaging.sent == []
 
 
 def test_send_missing_file(shell):
-    result = shell("send me --file nothing.txt")
+    result = shell("tg send me --file nothing.txt")
     assert result.code != 0
     assert "no such file" in result.blocks[0].message
     assert shell.messaging.sent == []
@@ -276,8 +276,8 @@ def test_sending_to_others_is_a_different_policy_action(shell):
 
     policy_module.check = spy
     try:
-        shell("send me to myself")
-        shell("send @durov to someone else")
+        shell("tg send me to myself")
+        shell("tg send @durov to someone else")
     finally:
         policy_module.check = original
     assert policy_module.SEND_MESSAGE in seen
@@ -286,22 +286,22 @@ def test_sending_to_others_is_a_different_policy_action(shell):
 
 def test_without_the_client_send_explains_itself():
     ctx = Context(registry=build_registry(), env=Env(cwd="/", home="/"), width=60)
-    result = dispatch.run_line("send me hi", ctx)
+    result = dispatch.run_line("tg send me hi", ctx)
     assert "messaging is not available here" in result.blocks[0].message
 
 
 # ---------------------------------------------------------------- completion
 
 def test_completion_offers_chats(shell):
-    candidates = shell.ctx.registry.complete(shell.ctx, ["send", ""], False)
+    candidates = shell.ctx.registry.complete(shell.ctx, ["tg", "send", ""], False)
     assert any("durov" in name for name in candidates)
 
 
-def test_send_and_search_are_separate_commands(shell):
-    names = shell.ctx.registry.names()
-    assert "send" in names and "search" in names
-    # `send search ...` used to work and must not quietly mean something else
-    assert shell("send search durov").code != 0
+def test_the_three_are_separate_commands(shell):
+    """Finding a chat and writing to one are different acts, and no argument
+    should quietly turn one into the other."""
+    assert set(shell.ctx.registry.get("tg").subcommands) == {"send", "chats", "id"}
+    assert shell("tg send search durov").code != 0
 
 
 # ------------------------------------------------------ calling the real SDK

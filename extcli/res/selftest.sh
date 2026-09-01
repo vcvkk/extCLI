@@ -8,7 +8,7 @@
 # Read it. Edit it. It is a plain file: `host paths` says where.
 #
 # Only one chat is ever written to, and only these two lines do it:
-#   send $chat ...
+#   tg send $chat ...
 # Change $chat below if you want them somewhere else.
 
 chat="@JettaXP"
@@ -56,17 +56,17 @@ echo ""
 
 echo "console"
 check help
-check help send
+check help tg send
 check history
-check copy
+check clip
 
 echo ""
 echo "host"
 check host status
 check host version
 check host paths
-check host window
-check host doctor
+check host check --window
+check host check
 
 echo ""
 echo "plugins"
@@ -97,7 +97,7 @@ check set
 check which echo
 check true
 check test -d /
-check backends
+check host backends
 
 echo ""
 echo "variables and aliases"
@@ -135,20 +135,20 @@ check df
 
 echo ""
 echo "chats"
-check search JettaXP
-check search --id $chat
-check send $chat extCLI self-test: text
-check send $chat --file probe.txt extCLI self-test: file
+check tg chats JettaXP
+check tg id $chat
+check tg send $chat extCLI self-test: text
+check tg send $chat --file probe.txt extCLI self-test: file
 
 echo ""
 echo "rootfs"
 check rootfs status
-check rootfs check
+check rootfs probe exec
 
 echo ""
 echo "things that must be refused"
-refuses send
-refuses send $chat
+refuses tg send
+refuses tg send $chat
 refuses plugin info no_such_plugin_here
 refuses source /no/such/script.sh
 refuses config get no_such_setting_here

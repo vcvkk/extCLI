@@ -2,7 +2,7 @@
 
 """`rootfs` — a Linux root filesystem inside the client.
 
-`rootfs check` comes first on purpose. Whether a rootfs can work at all is a
+`rootfs probe exec` comes first on purpose. Whether a rootfs can work at all is a
 property of this device's SELinux policy, not of this code: the plugin can run
 its own binaries through the dynamic linker, but a rootfs needs the programs it
 starts to be able to start others, and that is a different permission. The check
@@ -93,9 +93,9 @@ def _linker(ctx):
 class CheckCommand(Command):
     """The experiment that decides whether any of this is possible."""
 
-    name = "check"
+    name = "exec"
     summary = "can programs we start, start others"
-    usage = "rootfs check"
+    usage = "rootfs probe exec"
 
     def run(self, ctx, args):
         paths = ctx.require("paths")
@@ -124,7 +124,7 @@ class DirsCommand(Command):
 
     name = "dirs"
     summary = "which directories allow execve"
-    usage = "rootfs dirs"
+    usage = "rootfs probe dirs"
 
     def run(self, ctx, args):
         paths = ctx.require("paths")
@@ -153,7 +153,7 @@ class NativeCommand(Command):
 
     name = "native"
     summary = "can our own binaries run here"
-    usage = "rootfs native"
+    usage = "rootfs probe native"
 
     def run(self, ctx, args):
         paths = ctx.require("paths")
@@ -188,7 +188,7 @@ class SyscallsCommand(Command):
 
     name = "syscalls"
     summary = "which syscalls this app may make"
-    usage = "rootfs syscalls [--all]"
+    usage = "rootfs probe syscalls [--all]"
 
     def run(self, ctx, args):
         flags = parse_flags(args, {"--all": "bool", "-a": "bool"})
@@ -212,7 +212,7 @@ class SyscallsCommand(Command):
                 "they are refused is the useful part: the filter kills every "
                 "number it does not know, so a call cannot be got rid of by "
                 "turning it into nothing — it has to be turned into another "
-                "call. `rootfs syscalls --all` lists them." % empty))
+                "call. `rootfs probe syscalls --all` lists them." % empty))
             result.add(blocks.Blank())
         if not sandbox.can_divert(refused):
             result.add(blocks.Text(
@@ -305,7 +305,7 @@ class TraceCommand(Command):
                                     argv0=wanted.rsplit("/", 1)[-1])
         if command is None:
             raise CommandError("%s cannot be started" % argv[0],
-                               hint="`rootfs launch` says how guest programs "
+                               hint="`rootfs probe launch` says how guest programs "
                                     "start on this device")
 
         environment = guest.environment_for(guest.LOADER, root,
@@ -432,7 +432,7 @@ class LaunchCommand(Command):
 
     name = "launch"
     summary = "find how guest programs can be started"
-    usage = "rootfs launch"
+    usage = "rootfs probe launch"
 
     def run(self, ctx, args):
         root = _root(ctx)
@@ -471,7 +471,7 @@ class WritesCommand(Command):
 
     name = "writes"
     summary = "how a file may be written here"
-    usage = "rootfs writes"
+    usage = "rootfs probe writes"
     mutating = True
 
     def run(self, ctx, args):
@@ -549,7 +549,7 @@ def _backend(ctx):
     strategy = layout.saved_strategy(root)
     if not strategy:
         raise CommandError("it is not known how to start guest programs yet",
-                           hint="run `rootfs launch` once")
+                           hint="run `rootfs probe launch` once")
     values = _mount_values(ctx)
     return backend_module.RootfsBackend(
         root, _linker(ctx), strategy, native_dir=_native_dir(ctx),
@@ -613,6 +613,9 @@ def _mount_hosts(ctx):
         mounts_module.SDCARD: getattr(paths, "storage_dir", lambda: "/sdcard")(),
         mounts_module.EXTERA: paths.files_dir(),
         mounts_module.EXTCLI: paths.data_dir(),
+        # was missing, so `rootfs mounts` reported four paths while the console
+        # was built with five and the guest could reach one nothing listed
+        mounts_module.PATCH: paths.patch_dir(),
     }
 
 
@@ -631,9 +634,9 @@ def _runner(ctx, timeout=20):
 
 
 class SourcesCommand(Command):
-    name = "sources"
+    name = "images"
     summary = "root filesystems bundled with the plugin"
-    usage = "rootfs sources"
+    usage = "rootfs images"
 
     def run(self, ctx, args):
         paths = ctx.require("paths")
@@ -665,7 +668,7 @@ class InstallCommand(Command):
         if not flags.positional:
             raise CommandError(
                 "rootfs install needs a name or a tarball",
-                hint="rootfs install alpine  ·  `rootfs sources` lists them")
+                hint="rootfs install alpine  ·  `rootfs images` lists them")
         raw = flags.positional[0]
         tarball = self._resolve(ctx, raw)
 
@@ -692,7 +695,7 @@ class InstallCommand(Command):
                      % ", ".join(layout.REQUIRED)))
             return result
         _write_resolver(root)
-        result.add(blocks.Summary("installed at %s — now run `rootfs launch`"
+        result.add(blocks.Summary("installed at %s — now run `rootfs probe launch`"
                                   % root, role=blocks.SUCCESS))
         return result
 
@@ -705,7 +708,7 @@ class InstallCommand(Command):
             if not os.path.isfile(path):
                 raise CommandError(
                     "no such file, and no bundled rootfs called %r" % raw,
-                    hint="`rootfs sources` lists the bundled ones")
+                    hint="`rootfs images` lists the bundled ones")
             return path
 
         paths = ctx.require("paths")
@@ -853,9 +856,9 @@ class ToolsCommand(Command):
     ready — this is here to see what is there and to fetch a group later.
     """
 
-    name = "tools"
+    name = "pkg"
     summary = "the toolsets in the container"
-    usage = "rootfs tools [add <group>...]"
+    usage = "rootfs pkg [add <group>...]"
     mutating = True
 
     def run(self, ctx, args):
@@ -865,11 +868,11 @@ class ToolsCommand(Command):
         return blocks.Result([
             blocks.Text(rows),
             blocks.Blank(),
-            blocks.Summary("`rootfs tools add python` fetches one"),
+            blocks.Summary("`rootfs pkg add python` fetches one"),
         ])
 
     def _add(self, ctx, names):
-        """`rootfs tools add <toolset or package>...`
+        """`rootfs pkg add <toolset or package>...`
 
         Both, because both are what somebody means: `add python` is a toolset
         and `add nano` is one program, and having to know which of the two a
@@ -970,19 +973,25 @@ def _wanted_groups(names):
 
 
 def build():
-    return Group("rootfs", "a Linux root filesystem", [
-        StatusCommand(),
-        SetupCommand(),
-        ToolsCommand(),
+    # The six probes are one subject and belong under one word. They also read
+    # as questions rather than as things to look at, which `rootfs writes` did
+    # not — it sounded like a listing and is a measurement.
+    probe = Group("probe", "measure what this device allows", [
         CheckCommand(),
         DirsCommand(),
         NativeCommand(),
         SyscallsCommand(),
-        TraceCommand(),
         LaunchCommand(),
+        WritesCommand(),
+    ])
+    return Group("rootfs", "a Linux root filesystem", [
+        StatusCommand(),
+        SetupCommand(),
+        ToolsCommand(),
+        probe,
+        TraceCommand(),
         CommandsCommand(),
         MountsCommand(),
-        WritesCommand(),
         SourcesCommand(),
         InstallCommand(),
         RemoveCommand(),

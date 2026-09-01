@@ -310,23 +310,6 @@ class EnvCommand(Command):
                             for name in sorted(values)])
 
 
-class BackendsCommand(Command):
-    name = "backends"
-    summary = "what can run external commands here"
-    usage = "backends"
-
-    def run(self, ctx, args):
-        backend = getattr(ctx, "backend", None)
-        if backend is None:
-            return blocks.summary("no execution backend")
-        rows = backend.describe() if hasattr(backend, "describe") else []
-        names = [b.name for b in getattr(backend, "backends", []) if b.available()]
-        return blocks.Result([
-            blocks.Fields(rows) if rows else blocks.Text("no details"),
-            blocks.Summary("active: %s" % (", ".join(names) or "none")),
-        ])
-
-
 def _env(ctx):
     env = getattr(ctx, "env", None)
     if env is None:
@@ -363,5 +346,4 @@ def build_all():
         CdCommand(), PwdCommand(), ExportCommand(), UnsetCommand(), SetCommand(),
         AliasCommand(), UnaliasCommand(), SourceCommand(), TrueCommand(),
         FalseCommand(), TestCommand(), WhichCommand(), EnvCommand(),
-        BackendsCommand(),
     ]

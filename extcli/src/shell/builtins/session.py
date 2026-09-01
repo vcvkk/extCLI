@@ -37,17 +37,21 @@ class EchoCommand(Command):
         return blocks.text(" ".join(args))
 
 
-class CopyCommand(Command):
+class ClipCommand(Command):
     """The whole scrollback at once.
 
     Selecting part of it is a long press in the terminal — this is for when the
     answer is "all of it", which is most of the time it is being sent to
     somebody.
+
+    Named for what it reaches rather than what it does: `copy` a keystroke away
+    from `cp` meant one of them was going to be typed when the other was
+    wanted, and the two do very different things to a directory.
     """
 
-    name = "copy"
+    name = "clip"
     summary = "put the whole scrollback on the clipboard"
-    usage = "copy"
+    usage = "clip"
 
     def run(self, ctx, args):
         console = ctx.require("terminal")
@@ -123,4 +127,4 @@ class ExtcliCommand(Command):
 
 def build_all():
     return [ClearCommand(), ExitCommand(), EchoCommand(), HistoryCommand(),
-            CopyCommand(), ExtcliCommand()]
+            ClipCommand(), ExtcliCommand()]

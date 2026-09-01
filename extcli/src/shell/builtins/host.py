@@ -34,13 +34,30 @@ class PathsCommand(Command):
         return blocks.fields(rows)
 
 
-class DoctorCommand(Command):
-    name = "doctor"
-    summary = "probe execution backends"
-    usage = "host doctor [--refresh]"
+class CheckCommand(Command):
+    """What this device actually allows.
+
+    Was called `doctor`, which is a Homebrew word rather than a Unix one. The
+    window and the self-test moved in here as flags: all three answer the same
+    question — is this working, and if not, where does it stop — and three
+    names for one question is two too many.
+    """
+
+    name = "check"
+    summary = "probe what this device allows"
+    usage = ("host check [--refresh]\n"
+             "host check --self\n"
+             "host check --window")
+
+    SCRIPT = "selftest.sh"
 
     def run(self, ctx, args):
-        flags = parse_flags(args, {"--refresh": "bool", "-r": "bool"})
+        flags = parse_flags(args, {"--refresh": "bool", "-r": "bool",
+                                   "--self": "bool", "--window": "bool"})
+        if flags.has("--self"):
+            return _self_test(ctx, self.SCRIPT)
+        if flags.has("--window"):
+            return _window(ctx)
         probe = ctx.require("probe")
         force = flags.has("--refresh") or flags.has("-r")
         result = probe.result(force=force)
@@ -109,7 +126,7 @@ class ClassCommand(Command):
         return result
 
 
-class WindowCommand(Command):
+def _window(ctx):
     """Reports the console's own window.
 
     Whether a window covers the system bars cannot be reasoned out from source:
@@ -117,62 +134,69 @@ class WindowCommand(Command):
     two rounds of fixing a see-through strip behind the navigation bar were
     guesses made blind. This asks the device.
     """
-
-    name = "window"
-    summary = "size and flags of the console window"
-    usage = "host window"
-
-    def run(self, ctx, args):
-        console = ctx.require("terminal")
-        describe = getattr(console, "describe_window", None)
-        if not callable(describe):
-            raise CommandError("this console cannot describe its window")
-        rows = describe()
-        return blocks.Result([
-            blocks.Fields(rows, title="console window"),
-            blocks.Summary("decor should match display when the window covers "
-                           "the bars"),
-        ])
+    console = ctx.require("terminal")
+    describe = getattr(console, "describe_window", None)
+    if not callable(describe):
+        raise CommandError("this console cannot describe its window")
+    return blocks.Result([
+        blocks.Fields(describe(), title="console window"),
+        blocks.Summary("decor should match display when the window covers "
+                       "the bars"),
+    ])
 
 
-class SelfTestCommand(Command):
+def _self_test(ctx, script):
     """Runs the bundled script that exercises every command.
 
     A script rather than Python: it is a plain file the user can read and edit,
     and running it puts the shell itself under test — functions, "$@", $? and
     redirection all have to work for the report to come out.
     """
+    import os
 
-    name = "selftest"
-    summary = "run every command and report what worked"
-    usage = "host selftest"
-    mutating = True
+    paths = ctx.require("paths")
+    path = os.path.join(paths.res_dir(), script)
+    if not os.path.isfile(path):
+        raise CommandError("the self-test script is missing",
+                           hint="expected it at %s" % path)
+    runner = getattr(ctx, "run_script_text", None)
+    if runner is None:
+        raise CommandError("the self-test needs the console",
+                           hint="it runs in the shell, not in a chat")
+    with open(path, "r", encoding="utf-8") as handle:
+        return runner(handle.read())
 
-    SCRIPT = "selftest.sh"
+
+class BackendsCommand(Command):
+    """What can run an external command here.
+
+    Under `host` because it is a fact about this device, not a thing the shell
+    does — it sat beside `cd` and `grep` for no better reason than that it was
+    written next to them.
+    """
+
+    name = "backends"
+    summary = "what can run external commands here"
+    usage = "host backends"
 
     def run(self, ctx, args):
-        import os
-
-        paths = ctx.require("paths")
-        path = os.path.join(paths.res_dir(), self.SCRIPT)
-        if not os.path.isfile(path):
-            raise CommandError("the self-test script is missing",
-                               hint="expected it at %s" % path)
-        runner = getattr(ctx, "run_script_text", None)
-        if runner is None:
-            raise CommandError("the self-test needs the console",
-                               hint="it runs in the shell, not in a chat")
-        with open(path, "r", encoding="utf-8") as handle:
-            return runner(handle.read())
+        backend = getattr(ctx, "backend", None)
+        if backend is None:
+            return blocks.summary("no execution backend")
+        rows = backend.describe() if hasattr(backend, "describe") else []
+        names = [b.name for b in getattr(backend, "backends", []) if b.available()]
+        return blocks.Result([
+            blocks.Fields(rows) if rows else blocks.Text("no details"),
+            blocks.Summary("active: %s" % (", ".join(names) or "none")),
+        ])
 
 
 def build():
     return Group("host", "environment and diagnostics", [
         StatusCommand(),
         PathsCommand(),
-        DoctorCommand(),
+        CheckCommand(),
+        BackendsCommand(),
         VersionCommand(),
         ClassCommand(),
-        WindowCommand(),
-        SelfTestCommand(),
     ])

@@ -311,7 +311,7 @@ class Selection(object):
         return int(round(download)), int(round(installed))
 
     def command_words(self):
-        """What this selection is, as arguments to `rootfs tools add`.
+        """What this selection is, as arguments to `rootfs pkg add`.
 
         A group that is wanted whole is named as a group — shorter, and it says
         what was meant — and one that has had something taken out of it is
