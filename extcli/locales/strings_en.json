@@ -97,5 +97,14 @@
   "copy_button": "Copy",
   "close_button": "Close",
   "cancel_button": "Cancel",
-  "continue_button": "Continue"
+  "continue_button": "Continue",
+  "scrollback_item": "Lines kept",
+  "export_label": "Export the container",
+  "export_item_desc": "Pack it into one file and send it somewhere safe",
+  "export_nothing": "There is no container to export",
+  "export_question": "Packs Alpine and everything installed into it into one file, then opens the share sheet so you can send it wherever you like — a chat with yourself works well.",
+  "export_files": "%d files",
+  "export_confirm": "Pack",
+  "export_packing": "Packing the container",
+  "export_share": "Send the container"
 }

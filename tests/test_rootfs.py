@@ -2543,3 +2543,107 @@ def test_words_on_a_command_line_may_be_toolsets_or_packages():
     assert unknown == []
     _chosen, unknown = rootfs_builtin._wanted_groups(["nonsense"])
     assert unknown == ["nonsense"]
+
+
+# ------------------------------------------------------- exporting the whole
+
+def _container(tmp_path):
+    root = tmp_path / "rootfs"
+    (root / "bin").mkdir(parents=True)
+    (root / "etc").mkdir()
+    (root / "bin/busybox").write_bytes(b"elf" * 400)
+    (root / "etc/passwd").write_text("root:x:0:0:")
+    # a rootfs is full of these, and they point at its own /
+    os.symlink("/bin/busybox", str(root / "bin/sh"))
+    return str(root)
+
+
+def test_the_archive_holds_the_container(tmp_path):
+    import tarfile
+
+    from extcli_src.rootfs import export
+
+    root = _container(tmp_path)
+    target = str(tmp_path / "out.tar.gz")
+    ok, detail = export.archive(root, target)
+    assert ok, detail
+    with tarfile.open(target) as archive:
+        names = set(archive.getnames())
+    assert "bin/busybox" in names and "etc/passwd" in names
+
+
+def test_a_symlink_is_stored_as_itself(tmp_path):
+    """Following them would bake this phone's paths into the archive, and
+    inflate it with a copy of every file a link points at."""
+    import tarfile
+
+    from extcli_src.rootfs import export
+
+    root = _container(tmp_path)
+    target = str(tmp_path / "out.tar.gz")
+    export.archive(root, target)
+    with tarfile.open(target) as archive:
+        link = archive.getmember("bin/sh")
+    assert link.issym()
+    assert link.linkname == "/bin/busybox"
+
+
+def test_the_archive_can_be_unpacked_back(tmp_path):
+    import tarfile
+
+    from extcli_src.rootfs import export
+
+    root = _container(tmp_path)
+    target = str(tmp_path / "out.tar.gz")
+    export.archive(root, target)
+    back = tmp_path / "back"
+    with tarfile.open(target) as archive:
+        archive.extractall(str(back))
+    assert (back / "etc/passwd").read_text() == "root:x:0:0:"
+    assert os.path.islink(str(back / "bin/sh"))
+
+
+def test_progress_is_reported_and_ends_at_one(tmp_path):
+    from extcli_src.rootfs import export
+
+    seen = []
+    export.archive(_container(tmp_path), str(tmp_path / "o.tar.gz"),
+                   on_progress=seen.append)
+    assert seen and seen[-1] == 1.0
+    assert all(0.0 <= value <= 1.0 for value in seen)
+
+
+def test_exporting_nothing_is_refused_not_attempted(tmp_path):
+    from extcli_src.rootfs import export
+
+    ok, detail = export.archive(str(tmp_path / "absent"), str(tmp_path / "o.tgz"))
+    assert not ok and "no container" in detail
+    assert not (tmp_path / "o.tgz").exists()
+
+
+def test_the_archive_is_named_after_the_day_it_was_made(tmp_path):
+    """The first thing anybody does with a backup is make another one."""
+    import re
+
+    from extcli_src.rootfs import export
+
+    name = export.name_for(_container(tmp_path))
+    assert re.fullmatch(r"extcli-rootfs-\d{8}-\d{4}\.tar\.gz", name)
+
+
+def test_the_provider_follows_the_package(tmp_path):
+    """The authority differs between the beta and the full build, so it is
+    asked of the context rather than written down."""
+    from extcli_src.compat import intents
+
+    class Context(object):
+        def getPackageName(self):
+            return "com.exteragram.messenger.beta"
+
+    assert intents.authority(Context()) == "com.exteragram.messenger.beta.provider"
+
+    class Mute(object):
+        def getPackageName(self):
+            raise RuntimeError("no context here")
+
+    assert intents.authority(Mute()) == intents.FALLBACK_AUTHORITY

@@ -37,8 +37,13 @@ from . import dialogs, prefs, softkeys
 HISTORY_LIMIT = 200
 HISTORY_FILE = "history"
 
-# how much scrollback the session keeps when no terminal is attached
+# how much scrollback the session keeps when the setting cannot be read
 TRANSCRIPT_LIMIT = 1500
+
+# Read once per session, if it is there. Named for the plugin rather than
+# .profile: this is not a login shell, and a file called .profile in a home
+# directory the client also uses would be a promise about a wider world.
+RC_FILE = ".extclirc"
 
 # how much the invisible field may collect before it is tidied away
 RAW_FIELD_LIMIT = 200
@@ -133,6 +138,9 @@ class ConsoleSession(object):
         # the dialog showing this session — full screen or sheet, both dismiss
         self.window = None
         self.window_root = None
+        # read once: a session that changed its own limit halfway through
+        # would have kept some lines by one rule and some by another
+        self.scrollback = self._scrollback()
         self.history = self._load_history()
         self._history_index = len(self.history)
         self._busy = False
@@ -160,6 +168,12 @@ class ConsoleSession(object):
         self.set_ctrl_indicator = lambda armed: None
 
     # ------------------------------------------------------------------ setup
+
+    def _scrollback(self):
+        try:
+            return int(prefs.scrollback())
+        except Exception:
+            return TRANSCRIPT_LIMIT
 
     def _build_backends(self):
         """The chain, and the world its paths are in.
@@ -320,6 +334,7 @@ class ConsoleSession(object):
             self.terminal = textview.TextViewTerminal(
                 self.activity, self.palette,
                 text_size_sp=float(prefs.text_size()),
+                scrollback=self.scrollback,
             )
             self.renderer_kind = "views"
         log.log("console: renderer=%s" % self.renderer_kind)
@@ -445,8 +460,8 @@ class ConsoleSession(object):
         there when the screen comes back.
         """
         self.transcript.append(text)
-        if len(self.transcript) > TRANSCRIPT_LIMIT:
-            del self.transcript[:-TRANSCRIPT_LIMIT]
+        if len(self.transcript) > self.scrollback:
+            del self.transcript[:-self.scrollback]
         if self.terminal is not None:
             try:
                 self.terminal.write_line(text)
@@ -1061,8 +1076,8 @@ class ConsoleSession(object):
 
     def _keep(self, line):
         self.transcript.append(line)
-        if len(self.transcript) > TRANSCRIPT_LIMIT:
-            del self.transcript[:-TRANSCRIPT_LIMIT]
+        if len(self.transcript) > self.scrollback:
+            del self.transcript[:-self.scrollback]
 
     def _settle_output(self):
         """Ends the last line and takes back the blank ones after it."""
@@ -1124,8 +1139,42 @@ class ConsoleSession(object):
                 self.greet()
             except Exception as e:
                 log.error("console: greeting failed", e)
+            self.run_rc()
             self.refresh_input_line()
         after_layout(self, initial_command)
+
+    def run_rc(self):
+        """Reads ~/.extclirc, the way a shell reads its rc.
+
+        Everything set in a console died with it: the aliases, the exports, the
+        functions — so anybody who used this twice set them up twice. The file
+        is read once per session rather than once per screen, because coming
+        back from the back gesture is not a new shell.
+
+        It is sourced rather than executed, so what it defines lands in this
+        shell and not in a child that exits immediately after.
+        """
+        import os
+
+        env = self.shell_env
+        path = os.path.join(env.home or "", RC_FILE)
+        try:
+            if not os.path.isfile(env.host(path)):
+                return
+            with open(env.host(path), "r", encoding="utf-8") as handle:
+                text = handle.read()
+        except Exception as e:
+            log.error("console: cannot read %s" % RC_FILE, e)
+            return
+        try:
+            result = dispatch.run_line(text, self.make_context(origin="script"))
+        except Exception as e:
+            log.error("console: %s failed" % RC_FILE, e)
+            return
+        # only when it has something to say: a working rc file should be
+        # silent, and printing "ok" above the first prompt is noise forever
+        if result is not None and not result.ok:
+            self._write_result_now(result)
 
     def detach(self):
         """The screen is gone; the session is not.

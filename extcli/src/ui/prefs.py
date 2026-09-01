@@ -17,9 +17,15 @@ DEFAULT_SURFACE_INDEX = 0
 
 THEMES = ("termux", "default", "amoled")
 TEXT_SIZES = (10, 11, 12, 13, 14, 16)
+# How many lines the console keeps. `apk add build-base` prints several
+# thousand, and the error that mattered is usually near the start of them;
+# 1500 threw it away. The other end matters too — every kept line is a string
+# with its colours still in it, and a cheap phone should be able to say no.
+SCROLLBACKS = (500, 1500, 5000, 20000)
 
 DEFAULT_THEME_INDEX = 0
 DEFAULT_TEXT_SIZE_INDEX = 2  # 12sp
+DEFAULT_SCROLLBACK_INDEX = 1  # 1500 lines, what it always was
 
 
 def _get(key, default):
@@ -43,6 +49,12 @@ def theme_name():
 def text_size():
     return TEXT_SIZES[_index("text_size_index", DEFAULT_TEXT_SIZE_INDEX,
                              len(TEXT_SIZES))]
+
+
+def scrollback():
+    """How many lines the console keeps, both in the session and on screen."""
+    return SCROLLBACKS[_index("scrollback_index", DEFAULT_SCROLLBACK_INDEX,
+                              len(SCROLLBACKS))]
 
 
 def style_name():

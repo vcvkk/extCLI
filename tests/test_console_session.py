@@ -125,11 +125,12 @@ def test_a_new_terminal_replays_everything(session):
 
 def test_the_transcript_is_bounded():
     live = console.resume_or_create(None, None)
-    for i in range(console.TRANSCRIPT_LIMIT + 50):
+    live.scrollback = 40   # the setting, whatever it is set to
+    for i in range(live.scrollback + 50):
         live.emit(str(i))
-    assert len(live.transcript) == console.TRANSCRIPT_LIMIT
+    assert len(live.transcript) == live.scrollback
     # the oldest lines go, the newest stay
-    assert live.transcript[-1] == str(console.TRANSCRIPT_LIMIT + 49)
+    assert live.transcript[-1] == str(live.scrollback + 49)
 
 
 def test_clear_wipes_the_transcript_too(session):
@@ -810,3 +811,51 @@ def test_a_console_coming_back_asks_the_program_to_draw_itself(session):
     assert sizes == [(40, 11), (40, 12)], "one size twice is not a change"
     # and nothing of the scrollback was put on the program's screen
     assert session.terminal.lines == []
+
+
+# ------------------------------------------------------------- the rc file
+
+def _rc(session, tmp_path, text):
+    session.shell_env.home = str(tmp_path)
+    session.shell_env.cwd = str(tmp_path)
+    (tmp_path / console.RC_FILE).write_text(text, encoding="utf-8")
+
+
+def test_the_rc_file_lands_in_this_shell(session, tmp_path):
+    """Sourced, not executed: what it defines has to be here afterwards, not
+    in a child that exited on the last line."""
+    _rc(session, tmp_path, "greeting=fromrc\nalias hi='echo hello'\n")
+    session.run_rc()
+    assert session.shell_env.get("greeting") == "fromrc"
+
+
+def test_no_rc_file_is_not_an_event(session, tmp_path):
+    session.shell_env.home = str(tmp_path)
+    session.run_rc()
+    assert session.transcript == []
+
+
+def test_a_working_rc_file_says_nothing(session, tmp_path):
+    """A console that prints "ok" above its first prompt prints it forever."""
+    _rc(session, tmp_path, "quiet=yes\n")
+    session.run_rc()
+    assert session.transcript == []
+
+
+def test_a_broken_rc_file_does_not_take_the_console_with_it(session, tmp_path):
+    _rc(session, tmp_path, "nosuchcommand_at_all\n")
+    session.run_rc()
+    # it reported, and the console is still usable
+    assert any("not found" in line for line in session.transcript)
+    session.submit("echo alive")
+    assert any("alive" in line for line in session.transcript)
+
+
+def test_the_rc_file_is_read_once_per_session_not_per_screen(session, tmp_path):
+    """Coming back from the back gesture is not a new shell."""
+    _rc(session, tmp_path, "runs=$((runs+1))\n")
+    session.start()
+    session.detach()
+    session.terminal = FakeTerminal()
+    session.start()
+    assert session.shell_env.get("runs") == "1"

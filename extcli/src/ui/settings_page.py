@@ -160,6 +160,75 @@ def install_tools(selection):
                   % command)
 
 
+def _export_container():
+    """Packs the container and hands it to the share sheet.
+
+    Asks first, and the question carries the size: this is hundreds of
+    megabytes, and somebody on mobile data is entitled to know that before the
+    picker appears rather than after the upload starts.
+    """
+    from ..rootfs import export
+    from ..utils import purge
+
+    root = paths.rootfs_dir()
+    files, total = export.measure(root)
+    if not files:
+        dialogs.toast(_s("export_nothing", "There is no container to export"))
+        return
+    dialogs.confirm(
+        _s("export_label", "Export the container"),
+        "%s\n\n%s, %s" % (
+            _s("export_question",
+               "Packs Alpine and everything installed into it into one file, "
+               "then opens the share sheet so you can send it wherever you "
+               "like — a chat with yourself works well."),
+            _s("export_files", "%d files") % files,
+            purge.human_size(total)),
+        _export_now,
+        confirm_label=_s("export_confirm", "Pack"),
+        cancel_label=_s("cancel_button", "Cancel"))
+
+
+def _export_now():
+    from client_utils import run_on_queue
+
+    def work():
+        import os
+
+        from ..rootfs import export
+        from . import progress as progress_module
+
+        card = progress_module.SetupBulletin()
+        card.title = _s("export_packing", "Packing the container")
+        shown = card.show()
+        target = os.path.join(paths.tmp_dir(), export.name_for(paths.rootfs_dir()))
+        ok, detail = export.archive(paths.rootfs_dir(), target,
+                                    on_progress=card.update if shown else None)
+        if shown:
+            card.finish(ok=ok, text=None if ok else detail)
+        if not ok:
+            dialogs.toast(detail, error=True)
+            return
+        # the sheet is a screen, and screens are the UI thread's
+        from android_utils import run_on_ui_thread
+
+        run_on_ui_thread(lambda: _share(target))
+
+    try:
+        run_on_queue(work)
+    except Exception as e:
+        log.error("settings: cannot start the export", e)
+
+
+def _share(path):
+    from ..compat import intents
+
+    ok, detail = intents.share_file(
+        path, title=_s("export_share", "Send the container"))
+    if not ok:
+        dialogs.toast(detail, error=True)
+
+
 def _linker():
     from ..backends import linker as linker_module
     from ..compat import host as compat_host
@@ -349,6 +418,13 @@ def build(plugin):
             icon="msg_text_size",
         ),
         Selector(
+            key="scrollback_index",
+            text=_s("scrollback_item", "Lines kept"),
+            default=prefs.DEFAULT_SCROLLBACK_INDEX,
+            items=[str(size) for size in prefs.SCROLLBACKS],
+            icon="msg_list",
+        ),
+        Selector(
             key="console_surface",
             text=_s("surface_item", "Open console as"),
             default=prefs.DEFAULT_SURFACE_INDEX,
@@ -375,6 +451,13 @@ def build(plugin):
                        "git, python and the rest, fetched when you say so"),
             icon="msg_download",
             on_click=lambda view: _offer_tools(),
+        ),
+        Text(
+            text=_s("export_label", "Export the container"),
+            subtext=_s("export_item_desc",
+                       "Pack it into one file and send it somewhere safe"),
+            icon="msg_shareout",
+            on_click=lambda view: _export_container(),
         ),
         _page(Text, _s("mounts_item", "What the shell can see"),
               _s("mounts_item_desc", "Which of the four paths a guest opens"),
