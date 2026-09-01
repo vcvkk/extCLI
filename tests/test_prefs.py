@@ -147,3 +147,72 @@ def test_the_fastfetch_config_is_shipped_and_is_json():
     config = json.loads(without_comments)
     assert config["logo"]["type"] == "small"
     assert config["modules"]
+
+
+# ---------------------------------------------------------------- key rows
+
+def test_the_default_rows_are_what_they_always_were():
+    from extcli_src.ui import softkeys
+
+    assert len(softkeys.DEFAULT_ROWS) == 2
+    assert softkeys.DEFAULT_ROWS[0][0] == ("ESC", "cancel")
+
+
+def test_rows_survive_a_round_trip():
+    from extcli_src.ui import softkeys
+
+    assert softkeys.parse(softkeys.serialise(softkeys.DEFAULT_ROWS)) == \
+        softkeys.DEFAULT_ROWS
+
+
+def test_only_the_action_is_stored():
+    """A key's caption is not the user's to change, and storing it would let
+    the caption and the behaviour drift apart."""
+    from extcli_src.ui import softkeys
+
+    stored = softkeys.serialise(((("X", "cancel"),),))
+    assert "X" not in stored and "cancel" in stored
+
+
+def test_a_key_this_build_does_not_have_is_dropped():
+    """It would be a key that silently does nothing when pressed."""
+    from extcli_src.ui import softkeys
+
+    rows = softkeys.parse("cancel,teleport,complete")
+    assert [action for _label, action in rows[0]] == ["cancel", "complete"]
+
+
+def test_nothing_stored_means_the_defaults():
+    from extcli_src.ui import softkeys
+
+    assert softkeys.parse("") is None
+    assert softkeys.parse(None) is None
+    assert softkeys.parse("nothing,real,here") is None
+
+
+def test_a_row_cannot_be_made_unhittable():
+    from extcli_src.ui import softkeys
+
+    crowded = ",".join(["cancel"] * 30)
+    assert len(softkeys.parse(crowded)[0]) == softkeys.MAX_PER_ROW
+
+
+def test_every_catalogue_key_is_one_the_console_understands():
+    """A key on the row that the console has no branch for is a key that does
+    nothing, which is worse than not offering it."""
+    from extcli_src.ui import console, softkeys
+
+    handled = set(console.RAW_KEYS)
+    handled.update({"complete", "history_prev", "history_next", "clear",
+                    "cancel", "home", "end", "left", "right",
+                    "page_up", "page_down", "ctrl", "alt"})
+    for action, _label, _about in softkeys.CATALOGUE:
+        assert action in handled or action.startswith("insert:"), action
+
+
+def test_every_default_key_is_in_the_catalogue():
+    from extcli_src.ui import softkeys
+
+    for row in softkeys.DEFAULT_ROWS:
+        for _label, action in row:
+            assert action in softkeys.LABELS, action

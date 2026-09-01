@@ -32,16 +32,99 @@ FIRST_REPEAT = 400
 NEXT_REPEAT = 55
 
 # (label, action name) — the console maps action names to behaviour
-ROWS = (
+DEFAULT_ROWS = (
     (("ESC", "cancel"), ("/", "insert:/"), ("—", "insert:-"), ("HOME", "home"),
      ("↑", "history_prev"), ("END", "end"), ("PGUP", "page_up")),
     (("TAB", "complete"), ("CTRL", "ctrl"), ("ALT", "alt"), ("←", "left"),
      ("↓", "history_next"), ("→", "right"), ("PGDN", "page_down")),
 )
 
+# Every key that can be put on a row, and what it does. The console decides
+# behaviour from the action name, so this is the whole vocabulary: anything
+# not here would be a key that does nothing when pressed.
+CATALOGUE = (
+    ("cancel", "ESC", "escape, or clear the line"),
+    ("complete", "TAB", "complete the word"),
+    ("ctrl", "CTRL", "the next key is a control combination"),
+    ("alt", "ALT", "meta, for a keyboard that has one"),
+    ("left", "←", "move the caret left"),
+    ("right", "→", "move the caret right"),
+    ("history_prev", "↑", "the command before"),
+    ("history_next", "↓", "the command after"),
+    ("home", "HOME", "start of the line"),
+    ("end", "END", "end of the line"),
+    ("page_up", "PGUP", "scroll up"),
+    ("page_down", "PGDN", "scroll down"),
+    ("clear", "CLR", "clear what is typed"),
+    ("insert:/", "/", "type a slash"),
+    ("insert:-", "—", "type a dash"),
+    ("insert:|", "|", "type a pipe"),
+    ("insert:~", "~", "type a tilde"),
+    ("insert:$", "$", "type a dollar"),
+    ("insert:*", "*", "type a star"),
+    ("insert:.", ".", "type a dot"),
+    ("insert:'", "\'", "type a quote"),
+    ('insert:"', '"', "type a double quote"),
+)
 
-def build(activity, palette, session):
-    """Returns the two key rows and wires CTRL's indicator to the session."""
+ACTIONS = tuple(action for action, _label, _about in CATALOGUE)
+LABELS = {action: label for action, label, _about in CATALOGUE}
+
+# How many keys fit on one row before they are too narrow to hit. Seven is what
+# the default rows use and what a phone comfortably holds.
+MAX_PER_ROW = 8
+
+
+def serialise(rows):
+    """Rows as one line of text, for the settings store.
+
+    Actions only: the label of a key is not the user's to change, and storing
+    it would mean a key whose caption and behaviour could drift apart.
+    """
+    return "|".join(",".join(action for _label, action in row) for row in rows)
+
+
+def parse(text):
+    """Rows back out of the settings store, or None when it says nothing.
+
+    Anything unknown is dropped rather than kept: an action this build does
+    not have would be a key that silently does nothing, and a row of those is
+    worse than the default row.
+    """
+    if not text:
+        return None
+    rows = []
+    for part in str(text).split("|"):
+        keys = [action for action in part.split(",")
+                if action and action in LABELS]
+        if keys:
+            rows.append(tuple((LABELS[action], action)
+                              for action in keys[:MAX_PER_ROW]))
+    return tuple(rows) or None
+
+
+def rows():
+    """The rows to draw: the user's if they have set any, else the defaults."""
+    from . import prefs
+
+    try:
+        return parse(prefs.softkey_layout()) or DEFAULT_ROWS
+    except Exception:
+        return DEFAULT_ROWS
+
+
+def build(activity, palette, session, layout=None, on_key=None):
+    """Returns the two key rows and wires CTRL's indicator to the session.
+
+    `layout` and `on_key` are for the settings editor, which draws the same
+    rows so that what is being arranged and what will appear are the same
+    thing rather than two descriptions of it. With `on_key` a tap calls
+    `on_key(action, row, index)` instead of doing what the key does, and
+    holding one repeats nothing — in an editor a held key should open once,
+    not forty times. The row and the index are how it was drawn, not what the
+    action is, because the same action twice on a row is a thing somebody may
+    quite reasonably want and a tap on either of them has to say which.
+    """
     from android.util import TypedValue
     from android.view import Gravity
     from android.widget import LinearLayout, TextView
@@ -60,10 +143,10 @@ def build(activity, palette, session):
 
     ctrl_keys = []
 
-    for keys in ROWS:
+    for number, keys in enumerate(layout or rows()):
         row = LinearLayout(activity)
         row.setOrientation(LinearLayout.HORIZONTAL)
-        for label, action in keys:
+        for index, (label, action) in enumerate(keys):
             key = TextView(activity)
             key.setText(label)
             key.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12)
@@ -73,9 +156,13 @@ def build(activity, palette, session):
             key.setAllCaps(False)
             if typeface is not None:
                 key.setTypeface(typeface)
-            key.setOnClickListener(OnClickListener(_handler(action, session)))
-            if action in REPEATING:
-                _hold(key, action, session)
+            if on_key is not None:
+                key.setOnClickListener(
+                    OnClickListener(_reporter(on_key, action, number, index)))
+            else:
+                key.setOnClickListener(OnClickListener(_handler(action, session)))
+                if action in REPEATING:
+                    _hold(key, action, session)
             if action == "ctrl":
                 ctrl_keys.append(key)
             # weight 1 with zero width: seven equal columns, whatever the screen
@@ -91,8 +178,21 @@ def build(activity, palette, session):
             except Exception:
                 pass
 
-    session.set_ctrl_indicator = indicate
+    if on_key is None:
+        session.set_ctrl_indicator = indicate
     return container
+
+
+def _reporter(on_key, action, number, index):
+    """A tap that says which key it was, for the editor."""
+
+    def handler(view):
+        try:
+            on_key(action, number, index)
+        except Exception as e:
+            log.error("softkeys: cannot open the key editor", e)
+
+    return handler
 
 
 def _hold(key, action, session):

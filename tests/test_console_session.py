@@ -765,7 +765,8 @@ def test_every_repeating_key_is_a_key_that_exists():
     row, and has to be one the console knows what to do with."""
     from extcli_src.ui import softkeys
 
-    on_the_row = {action for row in softkeys.ROWS for _label, action in row}
+    on_the_row = {action for row in softkeys.DEFAULT_ROWS
+                  for _label, action in row}
     for action in softkeys.REPEATING:
         assert action in on_the_row, action
     # and holding one must never be a thing that runs a command

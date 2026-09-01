@@ -160,6 +160,13 @@ def install_tools(selection):
                   % command)
 
 
+def _edit_keys():
+    """The editor for the rows under the terminal."""
+    from . import keyrows
+
+    keyrows.edit(_activity())
+
+
 def _export_container():
     """Packs the container and hands it to the share sheet.
 
@@ -423,6 +430,14 @@ def build(plugin):
             default=prefs.DEFAULT_SCROLLBACK_INDEX,
             items=[str(size) for size in prefs.SCROLLBACKS],
             icon="msg_list",
+        ),
+        Text(
+            text=_s("keys_title", "Key rows"),
+            subtext=_s("keys_item_desc",
+                       "The extra keys under the terminal — escape, tab, "
+                       "the arrows — arranged how you like"),
+            icon="msg_edit",
+            on_click=lambda view: _edit_keys(),
         ),
         Selector(
             key="console_surface",

@@ -69,6 +69,19 @@ def chat_interval():
                                  len(CHAT_INTERVALS))]
 
 
+def softkey_layout():
+    """The key rows as the user arranged them, or "" for the defaults."""
+    value = _get("softkeys_layout", "")
+    return str(value) if value else ""
+
+
+def remember_softkeys(layout):
+    """Stores an arrangement. An empty one means "go back to the defaults"."""
+    from ..compat import store
+
+    return store.set("softkeys_layout", str(layout or ""))
+
+
 def style_name():
     """The style the on-screen console renders with."""
     from ..render import styles
