@@ -8,6 +8,8 @@ are enough to exercise them here — no device, no Android imports.
 
 import os
 
+import pytest
+
 from extcli_src import policy as policy_module
 from extcli_src.render import palette, plain
 from extcli_src.render.styles.classic import ClassicStyle
@@ -684,3 +686,95 @@ def test_the_app_s_own_directory_is_never_deleted(tmp_path):
                           keep=[paths.files_dir(), paths.storage_dir()])
     assert not result.ok
     assert os.path.isdir(paths.rootfs_dir())
+
+
+# ------------------------------------------------- the forms a shell expects
+
+def test_help_flag_answers_for_any_command():
+    """`help <name>` always worked, and nobody arriving from a shell tries it
+    before `--help`."""
+    text = "\n".join(rendered(make_ctx(), "log tail --help"))
+    assert "usage" in text and "log tail" in text
+    # and the short form is the same command, as everywhere else
+    assert "\n".join(rendered(make_ctx(), "log tail -h")) == text
+
+
+def test_help_on_a_group_lists_its_subcommands():
+    text = "\n".join(rendered(make_ctx(), "log --help"))
+    assert "tail" in text and "grep" in text and "clear" in text
+
+
+def test_help_goes_to_the_subcommand_that_was_named():
+    """`plugin list --help` is the list's help, not the group's — the flags
+    travel with the subcommand, however deep it is."""
+    text = "\n".join(rendered(make_ctx(), "plugin config get --help"))
+    assert "plugin config get" in text
+    assert "enable" not in text, "that is the group's help, not the get's"
+
+
+def test_a_file_can_still_be_called_dash_h():
+    """After `--` the words are the command's own."""
+    ctx = make_ctx()
+    assert "-h" in "\n".join(rendered(ctx, "echo -- -h"))
+
+
+# ----------------------------------------------------------- option parsing
+
+def _spec():
+    return {"--name": "str", "--count": "int", "--loud": "bool",
+            "-l": "bool", "-a": "bool", "-n": "int"}
+
+
+def test_long_option_takes_its_value_either_way():
+    from extcli_src.shell.registry import parse_flags
+
+    for line in (["--name", "x"], ["--name=x"]):
+        assert parse_flags(line, _spec())["--name"] == "x"
+
+
+def test_a_switch_given_a_value_is_refused():
+    from extcli_src.shell.registry import CommandError, parse_flags
+
+    with pytest.raises(CommandError) as caught:
+        parse_flags(["--loud=1"], _spec())
+    assert "takes no value" in str(caught.value)
+
+
+def test_short_options_can_be_run_together():
+    from extcli_src.shell.registry import parse_flags
+
+    flags = parse_flags(["-la"], _spec())
+    assert flags.has("-l") and flags.has("-a")
+
+
+def test_a_value_can_be_stuck_to_its_short_option():
+    from extcli_src.shell.registry import parse_flags
+
+    assert parse_flags(["-n5"], _spec())["-n"] == 5
+    assert parse_flags(["-ln5"], _spec())["-n"] == 5
+
+
+def test_an_unknown_letter_blames_the_whole_word():
+    """`-lz` is not "unknown option: -z" — nobody typed -z on its own."""
+    from extcli_src.shell.registry import CommandError, parse_flags
+
+    with pytest.raises(CommandError) as caught:
+        parse_flags(["-lz"], _spec())
+    assert "-lz" in str(caught.value)
+
+
+def test_a_lone_dash_and_a_negative_number_are_arguments():
+    from extcli_src.shell.registry import parse_flags
+
+    assert parse_flags(["-", "-5"], _spec()).positional == ["-", "-5"]
+
+
+def test_double_dash_ends_the_options():
+    from extcli_src.shell.registry import parse_flags
+
+    assert parse_flags(["--loud", "--", "--name"], _spec()).positional == ["--name"]
+
+
+def test_the_program_answers_for_itself():
+    text = "\n".join(rendered(make_ctx(), "extcli --version"))
+    assert "extCLI" in text

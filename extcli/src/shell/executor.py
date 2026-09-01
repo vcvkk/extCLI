@@ -281,7 +281,9 @@ class Executor(object):
         previous_stdin = getattr(ctx, "stdin", None)
         ctx.stdin = stdin
         try:
-            result = command.run(ctx, args)
+            # dispatch rather than run: it is what answers `--help`, and a
+            # group hands the flags down to the subcommand that was named
+            result = command.dispatch(ctx, args)
         except CommandError as e:
             result = e.as_result()
         except Exception as e:  # a broken builtin must not kill the shell

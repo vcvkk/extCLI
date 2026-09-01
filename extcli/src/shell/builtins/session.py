@@ -97,6 +97,30 @@ class HistoryCommand(Command):
         ])
 
 
+class ExtcliCommand(Command):
+    """The program answering for itself.
+
+    `host version` says the same thing and is where it belongs among the other
+    facts about this device. This exists because `extcli --version` is what a
+    person types, and a tool that does not answer its own name looks broken
+    before it has done anything.
+    """
+
+    name = "extcli"
+    summary = "what this is, and which version of it"
+    usage = "extcli [--version]"
+
+    def run(self, ctx, args):
+        from ...compat import host
+
+        parse_flags(args, {"--version": "bool", "-V": "bool"})
+        version = host.plugin_version() or "unknown"
+        return blocks.Result([
+            blocks.Text("extCLI %s" % version),
+            blocks.Summary("`help` lists the commands", role=blocks.DIM),
+        ])
+
+
 def build_all():
     return [ClearCommand(), ExitCommand(), EchoCommand(), HistoryCommand(),
-            CopyCommand()]
+            CopyCommand(), ExtcliCommand()]

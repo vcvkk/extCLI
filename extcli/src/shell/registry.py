@@ -4,6 +4,24 @@
 
 from ..render import blocks
 
+# What everybody types first when they do not know a command. `help <name>`
+# has always worked, but nobody arriving from a shell tries that before this.
+HELP_FLAGS = ("--help", "-h")
+
+
+def wants_help(args):
+    """Is this argument list asking for help rather than for work?
+
+    Only up to `--`. After it the words belong to the command, and a file
+    really can be named `-h`.
+    """
+    for arg in args:
+        if arg == "--":
+            return False
+        if arg in HELP_FLAGS:
+            return True
+    return False
+
 
 class CommandError(Exception):
     """A command failed in a way the user should read, not a traceback.
@@ -29,6 +47,16 @@ class Command(object):
     usage = ""
     # a command that changes something is not run by accident from a chat
     mutating = False
+
+    def dispatch(self, ctx, args):
+        """Where a command is entered from outside.
+
+        `--help` is answered here rather than in every command, so having it
+        is not something each one has to remember to write.
+        """
+        if wants_help(args):
+            return self.help_result()
+        return self.run(ctx, args)
 
     def run(self, ctx, args):
         raise NotImplementedError
@@ -64,6 +92,18 @@ class Group(Command):
     def add(self, command):
         self.subcommands[command.name] = command
         return self
+
+    def dispatch(self, ctx, args):
+        # a named subcommand takes the flags with it, so `plugin list --help`
+        # is the list's help and not the group's
+        if args and args[0] in self.subcommands:
+            return self.subcommands[args[0]].dispatch(ctx, args[1:])
+        return Command.dispatch(self, ctx, args)
+
+    def help_result(self):
+        # what the subcommands are is the useful answer for a group; the bare
+        # usage line would only repeat their names
+        return self.overview()
 
     @property
     def usage(self):
@@ -170,10 +210,56 @@ class Flags(object):
         return bool(self.values.get(name))
 
 
+def _unknown(arg, spec):
+    return CommandError(
+        "unknown option: %s" % arg,
+        hint=suggest(arg, [k for k in spec if k.startswith("-")], "options: "),
+    )
+
+
+def _typed(flag, raw, kind):
+    if kind != "int":
+        return raw
+    try:
+        return int(raw)
+    except ValueError:
+        raise CommandError("%s needs a number, got %r" % (flag, raw))
+
+
+def _explode(arg, spec):
+    """`-la` as `-l -a`, and `-n5` as `-n 5`.
+
+    Returns None when any letter is not a flag, so the caller can report the
+    whole word as unknown rather than blaming one character of it.
+    """
+    out = []
+    for index, letter in enumerate(arg[1:], start=1):
+        flag = "-" + letter
+        kind = spec.get(flag)
+        if kind is None:
+            return None
+        out.append(flag)
+        if kind == "bool":
+            continue
+        # one that takes a value ends the cluster and takes the rest with it
+        rest = arg[index + 1:]
+        if rest:
+            out.append(rest)
+        return out
+    return out
+
+
 def parse_flags(args, spec, command=None):
-    """`spec` maps flag -> "bool" | "str" | "int"; aliases go in the same map."""
+    """`spec` maps flag -> "bool" | "str" | "int"; aliases go in the same map.
+
+    Deliberately small, but it keeps to the forms anybody coming from a shell
+    expects: `--name value` and `--name=value`, short flags on their own or
+    run together, `--` to end the options, and a lone `-` or a negative number
+    left alone as an argument.
+    """
     values = {}
     positional = []
+    args = list(args)
     i = 0
     while i < len(args):
         arg = args[i]
@@ -181,27 +267,31 @@ def parse_flags(args, spec, command=None):
             positional.extend(args[i + 1:])
             break
         if arg.startswith("-") and arg != "-" and not _is_negative_number(arg):
+            if arg.startswith("--") and "=" in arg:
+                flag, raw = arg.split("=", 1)
+                kind = spec.get(flag)
+                if kind is None:
+                    raise _unknown(flag, spec)
+                if kind == "bool":
+                    raise CommandError("%s takes no value" % flag)
+                values[flag] = _typed(flag, raw, kind)
+                i += 1
+                continue
+            if not arg.startswith("--") and len(arg) > 2 and arg not in spec:
+                exploded = _explode(arg, spec)
+                if exploded is not None:
+                    args[i:i + 1] = exploded
+                    continue
             kind = spec.get(arg)
             if kind is None:
-                raise CommandError(
-                    "unknown option: %s" % arg,
-                    hint=suggest(arg, [k for k in spec if k.startswith("-")],
-                                 "options: "),
-                )
+                raise _unknown(arg, spec)
             if kind == "bool":
                 values[arg] = True
                 i += 1
                 continue
             if i + 1 >= len(args):
                 raise CommandError("%s needs a value" % arg)
-            raw = args[i + 1]
-            if kind == "int":
-                try:
-                    values[arg] = int(raw)
-                except ValueError:
-                    raise CommandError("%s needs a number, got %r" % (arg, raw))
-            else:
-                values[arg] = raw
+            values[arg] = _typed(arg, args[i + 1], kind)
             i += 2
             continue
         positional.append(arg)
