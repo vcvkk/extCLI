@@ -445,6 +445,14 @@ def build(plugin):
             default=True,
             icon="msg_photo_settings",
         ),
+        Selector(
+            key="chat_interval_index",
+            text=_s("chat_interval_item", "Update the .cli reply every"),
+            default=prefs.DEFAULT_CHAT_INTERVAL_INDEX,
+            items=[_s("seconds_short", "%ds") % value
+                   for value in prefs.CHAT_INTERVALS],
+            icon="msg_message",
+        ),
         Text(
             text=_s("tools_item", "Tools in the container"),
             subtext=_s("tools_item_desc",

@@ -251,10 +251,14 @@ def _refresh_console():
 def on_send_message_hook(plugin, account, params):
     """Intercepts `.cli` typed into a chat.
 
-    Bare `.cli` opens the console. `.cli <command>` currently opens the console
-    and runs the command there; sending the output back as a live-updated
-    message is the next stage, and until it exists the message is not sent
-    rather than silently going out as plain text.
+    Bare `.cli` opens the console. `.cli <command>` answers in the chat: the
+    command runs and one message is edited as its output arrives, because
+    somebody who types a command into a chat wants the answer there and not on
+    a screen over it.
+
+    The console is still the fallback. A client that will not say which message
+    it just sent leaves nothing to keep updating, and then opening the console
+    is the honest outcome rather than a reply that never changes.
     """
     from base_plugin import HookResult, HookStrategy
 
@@ -270,8 +274,50 @@ def on_send_message_hook(plugin, account, params):
         return HookResult()
 
     command = text[len(CHAT_COMMAND):].strip()
-    _open_console_on_ui(plugin, command or None)
+    if command:
+        _answer_in_chat(plugin, params, command)
+    else:
+        _open_console_on_ui(plugin, None)
     return HookResult(strategy=HookStrategy.CANCEL)
+
+
+def _peer_of(params):
+    """The chat the command was typed into."""
+    for name in ("peer", "dialog_id", "peer_id", "dialogId"):
+        try:
+            value = getattr(params, name)
+        except Exception:
+            continue
+        if value not in (None, 0):
+            return int(value)
+    return None
+
+
+def _answer_in_chat(plugin, params, command):
+    """Runs the command with its output in the chat, or opens the console."""
+    peer = _peer_of(params)
+    if peer is None:
+        log.log("chat: no peer on the hook params; opening the console",
+                debug=True)
+        _open_console_on_ui(plugin, command)
+        return
+
+    def work():
+        from . import relay
+
+        try:
+            if not relay.run(plugin, peer, command):
+                _open_console_on_ui(plugin, command)
+        except Exception as e:
+            log.error("chat: could not answer in the chat", e)
+            _open_console_on_ui(plugin, command)
+
+    try:
+        from client_utils import run_on_queue
+
+        run_on_queue(work)
+    except Exception:
+        work()
 
 
 def _open_console_on_ui(plugin, command):

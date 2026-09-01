@@ -106,5 +106,7 @@
   "export_files": "%d files",
   "export_confirm": "Pack",
   "export_packing": "Packing the container",
-  "export_share": "Send the container"
+  "export_share": "Send the container",
+  "chat_interval_item": "Update the .cli reply every",
+  "seconds_short": "%ds"
 }

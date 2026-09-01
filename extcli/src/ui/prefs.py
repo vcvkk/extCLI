@@ -22,10 +22,15 @@ TEXT_SIZES = (10, 11, 12, 13, 14, 16)
 # 1500 threw it away. The other end matters too — every kept line is a string
 # with its colours still in it, and a cheap phone should be able to say no.
 SCROLLBACKS = (500, 1500, 5000, 20000)
+# How often a `.cli` reply may be rewritten. Telegram publishes no edit limits
+# and the real one moves with the account, so the shortest offered is the
+# floor from shell.live rather than a number claimed to be safe.
+CHAT_INTERVALS = (3, 5, 10, 30)
 
 DEFAULT_THEME_INDEX = 0
 DEFAULT_TEXT_SIZE_INDEX = 2  # 12sp
 DEFAULT_SCROLLBACK_INDEX = 1  # 1500 lines, what it always was
+DEFAULT_CHAT_INTERVAL_INDEX = 1  # 5 seconds
 
 
 def _get(key, default):
@@ -55,6 +60,13 @@ def scrollback():
     """How many lines the console keeps, both in the session and on screen."""
     return SCROLLBACKS[_index("scrollback_index", DEFAULT_SCROLLBACK_INDEX,
                               len(SCROLLBACKS))]
+
+
+def chat_interval():
+    """Seconds between rewrites of a `.cli` reply."""
+    return CHAT_INTERVALS[_index("chat_interval_index",
+                                 DEFAULT_CHAT_INTERVAL_INDEX,
+                                 len(CHAT_INTERVALS))]
 
 
 def style_name():

@@ -106,5 +106,7 @@
   "export_files": "файлов: %d",
   "export_confirm": "Упаковать",
   "export_packing": "Упаковываю контейнер",
-  "export_share": "Отправить контейнер"
+  "export_share": "Отправить контейнер",
+  "chat_interval_item": "Обновлять ответ .cli каждые",
+  "seconds_short": "%d с"
 }

@@ -549,3 +549,65 @@ def download(peer_id, limit=20, before=0, target=".",
             record["detail"] = "%s: %s" % (type(e).__name__, e)
         out.append(record)
     return out
+
+
+# ------------------------------------------------- a message that keeps changing
+
+def _message_id_of(value):
+    """The id of a message the client just sent, however it hands it back.
+
+    Not knowable in advance: send_text returns an int on one SDK and the
+    message object on another, and on a third it returns nothing useful at
+    all. The last case is not a failure — it only means the message cannot be
+    edited afterwards, and the caller is told by getting None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value or None
+    for name in ("id", "getId"):
+        try:
+            found = getattr(value, name)
+            found = found() if callable(found) else found
+            if found:
+                return int(found)
+        except Exception:
+            continue
+    return None
+
+
+def send_for_editing(peer_id, text, parse_mode=None):
+    """Sends a message and says which one it is. (ok, message_id, detail).
+
+    `message_id` is None when this client will not say, which means the text
+    is in the chat but cannot be updated — worth knowing before promising
+    somebody a live view of a long command.
+    """
+    try:
+        peer = int(peer_id)
+        value = _call("send_text")([
+            ((peer, str(text), account(), parse_mode), {}),
+            ((peer, str(text)), {}),
+        ])
+        return True, _message_id_of(value), "sent"
+    except Exception as e:
+        log.error("messaging: send failed", e)
+        return False, None, "%s: %s" % (type(e).__name__, e)
+
+
+def edit_text(peer_id, message_id, text, parse_mode=None):
+    """Rewrites a message already in the chat. (ok, detail).
+
+    The detail carries the client's own words on failure, because the one
+    error that matters here — FLOOD_WAIT_x — has the number to wait for in it.
+    """
+    try:
+        peer, ident = int(peer_id), int(message_id)
+        _call("edit_message")([
+            ((peer, ident, str(text), account(), parse_mode), {}),
+            ((peer, ident, str(text)), {}),
+        ])
+        return True, "edited"
+    except Exception as e:
+        log.log("messaging: edit failed: %s" % e, debug=True)
+        return False, str(e)
