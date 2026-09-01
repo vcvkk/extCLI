@@ -46,6 +46,15 @@ class InprocBackend(object):
             "seq": _seq,
         }
 
+    @property
+    def translates(self):
+        """Whether this one was given the map.
+
+        Unlike the others it is either kind depending on how it was built, so
+        the answer is asked of the instance rather than the class.
+        """
+        return self.paths is not None and self.paths.active
+
     def available(self):
         return True
 

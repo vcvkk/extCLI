@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The shell, the rendering layer and the path mapping never import Android, so
+# most of this project can be checked without a device — and the native side
+# can be checked by rebuilding it and seeing whether the result is what was
+# committed.
+#
+# The Kotlin renderer is not built here on purpose: it needs kotlinc, r8 and
+# android-all, about 300 MB of toolchain, to produce a dex that changes maybe
+# twice a year. Rebuild it by hand with scripts/kotlin-build.sh when kotlin/
+# changes.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: python -m pip install --quiet pytest
+
+      # test_pathmap builds native/pathmap_harness.c so the loader's path
+      # translation is exercised for real rather than reimplemented
+      - name: Check the C compiler the harness needs
+        run: clang --version
+
+      - run: python -m pytest tests/ -q
+
+  native:
+    name: native binaries reproduce
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The binaries in extcli/res/native are built from native/*.c and are
+      # committed, because a plugin build must not need a compiler. Rebuilding
+      # them here keeps the two from drifting: if this step leaves a diff, the
+      # sources changed and the binaries were not rebuilt — or the toolchain
+      # moved, in which case rebuild and commit the new ones deliberately.
+      #
+      # The script also refuses to produce a binary that needs relocations.
+      # Nothing applies them to these programs, so one would be a pointer still
+      # holding its link-time value: a crash on first use, twice already.
+      - name: Rebuild
+        run: |
+          clang --version
+          sh scripts/native-build.sh
+
+      - name: Compare with what is committed
+        run: git diff --exit-code --stat -- extcli/res/native
+
+  package:
+    name: plugin builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # pinned: the version stamps itself into meta.yml, and bytecode is only
+      # comparable across builds of the same Python and the same builder
+      - name: Install ElyxBuilder
+        run: python -m pip install --quiet "ElyxBuilder==0.6.1"
+
+      - name: Build
+        run: elyb build -c 2 -nf
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extCLI-${{ github.sha }}
+          path: builds/*.eaf
+          if-no-files-found: error

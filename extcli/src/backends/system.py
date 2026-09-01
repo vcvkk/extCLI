@@ -370,6 +370,10 @@ class SystemBackend(object):
     """External commands via subprocess. Interactive ptys come later."""
 
     name = "system"
+    # A path handed to this backend is a path on the phone. It knows nothing
+    # about a guest's `/`, so a chain that is inside a rootfs must not contain
+    # it — see backends.chain.build.
+    translates = False
 
     def __init__(self, shell=None, bin_dirs=None, timeout=DEFAULT_TIMEOUT):
         self.shell = shell or self._find(SH_CANDIDATES)

@@ -30,6 +30,9 @@ class RootfsBackend(object):
     """A backend whose commands come out of the installed rootfs."""
 
     name = "rootfs"
+    # the loader rewrites paths at the syscall, so a guest path means what the
+    # guest meant by it
+    translates = True
 
     def __init__(self, root, linker, strategy=None, native_dir=None,
                  timeout=DEFAULT_TIMEOUT, blocked=None, mount_rows=None,

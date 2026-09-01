@@ -117,6 +117,18 @@ def build(native_dir=None, abi=None, probe_result=None, rootfs=None,
 
     `probe_result` is only a hint for logging: the backends check for themselves
     what they can do, so a stale probe cache cannot disable a working shell.
+
+    The last step is a latch rather than a comment. Being inside a rootfs and
+    having a backend that can translate are two different facts, and they come
+    apart: the paths are settled by what is installed, and the rootfs backend
+    is built separately and can fail to appear — no linker on this device, or
+    anything else that makes `_build_rootfs` return None. A chain built in that
+    state used to keep `system`, and then a guest path went to a backend that
+    reads it as a path on the phone: `rm -rf /*` inside the container asked the
+    phone to delete its own root. So a chain that is inside a rootfs drops
+    every backend that cannot translate, whatever the reason it is there.
+    `inproc` always can when it has the map, so the console is never left with
+    nothing.
     """
     backends = []
     if rootfs is not None and rootfs.available():
@@ -128,4 +140,7 @@ def build(native_dir=None, abi=None, probe_result=None, rootfs=None,
             if linker.available():
                 backends.append(linker)
     backends.append(InprocBackend(paths=paths))
+    if paths is not None and paths.active:
+        backends = [backend for backend in backends
+                    if getattr(backend, "translates", False)]
     return ChainBackend(backends)

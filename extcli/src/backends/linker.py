@@ -43,6 +43,9 @@ class LinkerBackend(object):
     """External commands from a directory of our own ELF binaries."""
 
     name = "linker"
+    # the binaries are ours and the paths are the phone's; nothing here maps a
+    # guest path onto them
+    translates = False
 
     def __init__(self, bin_dir, abi=None, linker=None, timeout=DEFAULT_TIMEOUT,
                  bin_dirs=BIN_DIRS):

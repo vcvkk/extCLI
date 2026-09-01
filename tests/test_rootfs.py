@@ -482,6 +482,90 @@ def test_the_chain_is_unchanged_without_a_native_directory():
     assert "linker" not in names
 
 
+def _inside(tmp_path):
+    """The mount table of a shell that is standing inside a rootfs."""
+    from extcli_src.rootfs import mounts
+
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    table = mounts.Paths(rows=[("/", str(root))], values={mounts.ROOT: True})
+    assert table.active
+    return table
+
+
+def test_a_chain_inside_a_rootfs_drops_what_cannot_translate(tmp_path,
+                                                             monkeypatch):
+    """The one that cost a container.
+
+    Being inside a rootfs and having a backend that can translate are separate
+    facts, and they come apart: the paths follow what is installed, while the
+    rootfs backend is built separately and returns None when, say, there is no
+    linker. The chain then kept `system`, whose idea of `/etc` is the phone's —
+    so a guest path reached a backend that reads it as a real one.
+    """
+    from extcli_src.backends import chain
+
+    monkeypatch.setattr(linker_module, "find_linker",
+                        lambda abi=None, exists=None: linker_module.LINKER64)
+    native = tmp_path / "native"
+    native.mkdir()
+    built = chain.build(native_dir=str(native), abi="arm64-v8a",
+                        rootfs=None, paths=_inside(tmp_path))
+    names = [backend.name for backend in built.backends]
+    assert "system" not in names and "linker" not in names
+    # and something is still there to run commands with
+    assert names == ["inproc"]
+    assert all(backend.translates for backend in built.backends)
+
+
+def test_the_rootfs_backend_is_kept_because_it_translates(tmp_path):
+    from extcli_src.backends import chain
+
+    class FakeRootfs(object):
+        name = "rootfs"
+        translates = True
+
+        def available(self):
+            return True
+
+    built = chain.build(rootfs=FakeRootfs(), paths=_inside(tmp_path))
+    assert [backend.name for backend in built.backends] == ["rootfs", "inproc"]
+
+
+def test_a_rootfs_backend_that_cannot_translate_is_dropped_too(tmp_path):
+    """The latch is about the property, not about the name: anything claiming
+    to be the rootfs backend still has to be able to translate."""
+    from extcli_src.backends import chain
+
+    class Impostor(object):
+        name = "rootfs"
+        translates = False
+
+        def available(self):
+            return True
+
+    built = chain.build(rootfs=Impostor(), paths=_inside(tmp_path))
+    assert [backend.name for backend in built.backends] == ["inproc"]
+
+
+def test_outside_a_rootfs_nothing_is_dropped():
+    """Without a mount table there is no guest path to get wrong, and the
+    chain is what it always was."""
+    from extcli_src.backends import chain
+
+    names = [backend.name for backend in chain.build(paths=None).backends]
+    assert "system" in names and "inproc" in names
+
+
+def test_inproc_says_whether_it_was_given_the_map(tmp_path):
+    from extcli_src.backends.inproc import InprocBackend
+    from extcli_src.rootfs import mounts
+
+    assert not InprocBackend().translates
+    assert not InprocBackend(paths=mounts.Paths()).translates
+    assert InprocBackend(paths=_inside(tmp_path)).translates
+
+
 # ------------------------------------------------------------ guest launching
 
 from extcli_src.rootfs import guest  # noqa: E402
