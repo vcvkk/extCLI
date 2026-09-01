@@ -198,6 +198,71 @@ def reload(plugin_id):
     return True, "%s reloaded" % plugin_id
 
 
+def read_archive(path):
+    """What a .eaf says it is, without asking the client anything.
+
+    A plugin archive is a zip whose `refmap.yml` names the file holding the
+    metadata, and that file is the flat yaml `meta.parse` already reads. Doing
+    this here means a mistyped path or somebody's photo is refused with a
+    reason before the client is handed anything to install.
+
+    Returns the metadata as a dict, or None if this is not a plugin archive.
+    """
+    import zipfile
+
+    from . import meta as meta_module
+
+    try:
+        with zipfile.ZipFile(str(path)) as archive:
+            refmap = meta_module.parse(
+                archive.read("refmap.yml").decode("utf-8", "replace"))
+            info = refmap.get("metainfo")
+            if not info:
+                return None
+            data = meta_module.parse(
+                archive.read(info).decode("utf-8", "replace"))
+    except Exception as e:
+        log.log("plugins: %s is not a plugin archive: %s" % (path, e), debug=True)
+        return None
+    return data if data.get("id") else None
+
+
+def _file_forms(path):
+    """The argument the client's installer wants.
+
+    Which of the two it is is not knowable from here — a java.io.File is the
+    likelier signature, a String is the easier one — so both are offered and
+    whichever is accepted is remembered by `try_call`.
+    """
+    forms = []
+    try:
+        from java.io import File
+
+        forms.append(("file", File(str(path))))
+    except Exception:
+        pass
+    forms.append(("path", str(path)))
+    return forms
+
+
+INSTALL_METHODS = ("installPlugin", "installPluginFromFile",
+                   "loadPluginFromFile", "addPlugin")
+
+
+def install(path):
+    """Hands an archive to the client to install. Returns (ok, detail)."""
+    ctrl = controller()
+    if ctrl is None:
+        return False, "plugins controller unavailable"
+    for label, argument in _file_forms(path):
+        result = reflect.try_call(ctrl, INSTALL_METHODS, argument,
+                                  key="controller.install.%s" % label,
+                                  default="__missing__")
+        if result != "__missing__":
+            return True, "installed from %s" % path
+    return False, "client exposes no install path"
+
+
 def uninstall(plugin_id):
     ctrl = controller()
     if ctrl is None:

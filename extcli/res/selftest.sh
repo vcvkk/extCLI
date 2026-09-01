@@ -150,6 +150,7 @@ echo "things that must be refused"
 refuses tg send
 refuses tg send $chat
 refuses plugin info no_such_plugin_here
+refuses plugin install /no/such/file.eaf
 refuses source /no/such/script.sh
 refuses config get no_such_setting_here
 refuses nosuchcommand

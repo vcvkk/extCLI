@@ -86,6 +86,17 @@ class FakePlugins(object):
         self.settings.pop(plugin_id, None)
         return True, "settings of %s cleared" % plugin_id
 
+    def read_archive(self, path):
+        # the real reader: it needs no client, and a fake one would agree with
+        # itself about what a plugin archive is and prove nothing
+        from extcli_src.compat import plugins as real
+
+        return real.read_archive(path)
+
+    def install(self, path):
+        self.calls.append(("install", path))
+        return True, "installed from %s" % path
+
 
 class FakeHost(object):
     def describe(self):
@@ -778,3 +789,118 @@ def test_double_dash_ends_the_options():
 def test_the_program_answers_for_itself():
     text = "\n".join(rendered(make_ctx(), "extcli --version"))
     assert "extCLI" in text
+
+
+# ------------------------------------------------------- installing a plugin
+
+def _archive(tmp_path, name="thing.eaf", plugin_id="dev_thing", version="1.0",
+             refmap="metainfo: dev_thing/meta.yml\n"):
+    """A plugin archive, built the way elyxbuilder builds one."""
+    import zipfile
+
+    path = tmp_path / name
+    with zipfile.ZipFile(str(path), "w") as archive:
+        archive.writestr("refmap.yml", refmap)
+        archive.writestr("dev_thing/meta.yml",
+                         'name: Thing\nid: %s\nversion: "%s"\nauthor: "someone"\n'
+                         % (plugin_id, version))
+    return str(path)
+
+
+def _shell_ctx(tmp_path, **overrides):
+    from extcli_src.shell.env import Env
+
+    ctx = make_ctx(**overrides)
+    ctx.env = Env(cwd=str(tmp_path), home=str(tmp_path))
+    return ctx
+
+
+def test_install_reads_the_archive_and_hands_it_over(tmp_path):
+    ctx = _shell_ctx(tmp_path)
+    path = _archive(tmp_path)
+    text = "\n".join(rendered(ctx, "plugin install %s" % path))
+    assert "dev_thing" in text and "1.0" in text
+    assert ("install", path) in ctx.services.plugins.calls
+
+
+def test_install_refuses_a_file_that_is_not_a_plugin(tmp_path):
+    ctx = _shell_ctx(tmp_path)
+    photo = tmp_path / "cat.jpg"
+    photo.write_bytes(b"\xff\xd8\xff not a zip")
+    result = run(ctx, "plugin install %s" % photo)
+    assert result.code != 0
+    assert "not a plugin archive" in result.blocks[0].message
+    assert ctx.services.plugins.calls == []
+
+
+def test_install_refuses_an_archive_with_no_metadata(tmp_path):
+    """A zip is not a plugin just because it is a zip."""
+    import zipfile
+
+    ctx = _shell_ctx(tmp_path)
+    path = tmp_path / "empty.eaf"
+    with zipfile.ZipFile(str(path), "w") as archive:
+        archive.writestr("readme.txt", "hello")
+    assert run(ctx, "plugin install %s" % path).code != 0
+
+
+def test_install_says_which_file_is_missing(tmp_path):
+    ctx = _shell_ctx(tmp_path)
+    result = run(ctx, "plugin install nothing.eaf")
+    assert result.code != 0
+    assert "no such file" in result.blocks[0].message
+
+
+def test_install_of_a_directory_points_at_the_build(tmp_path):
+    ctx = _shell_ctx(tmp_path)
+    (tmp_path / "src").mkdir()
+    result = run(ctx, "plugin install src")
+    assert result.code != 0
+    assert "elyb build" in (result.blocks[0].hint or "")
+
+
+def test_installing_over_something_needs_saying_so(tmp_path):
+    """Otherwise the answer to "it worked" is "what did I just overwrite"."""
+    ctx = _shell_ctx(tmp_path)
+    path = _archive(tmp_path, plugin_id="extcli", version="9.9")
+    result = run(ctx, "plugin install %s" % path)
+    assert result.code != 0
+    assert "already installed" in result.blocks[0].message
+    assert "--force" in (result.blocks[0].hint or "")
+    assert ctx.services.plugins.calls == []
+
+    text = "\n".join(rendered(ctx, "plugin install %s --force" % path))
+    assert "replaced extcli" in text
+
+
+def test_installing_goes_through_policy(tmp_path):
+    seen = []
+    original = policy_module.check
+
+    def spy(action, detail="", assume_yes=False):
+        seen.append(action)
+        return original(action, detail, assume_yes)
+
+    ctx = _shell_ctx(tmp_path)
+    path = _archive(tmp_path)
+    policy_module.check = spy
+    try:
+        run(ctx, "plugin install %s" % path)
+    finally:
+        policy_module.check = original
+    assert policy_module.PLUGIN_INSTALL in seen
+
+
+def test_putting_code_on_the_device_counts_as_sensitive():
+    """It is a bigger thing than enabling one that is already there."""
+    assert policy_module.PLUGIN_INSTALL in policy_module.SENSITIVE
+
+
+def test_the_archive_reader_follows_refmap_to_the_metadata(tmp_path):
+    from extcli_src.compat import plugins
+
+    assert plugins.read_archive(_archive(tmp_path))["id"] == "dev_thing"
+    # the path is what refmap says it is, not a guess
+    assert plugins.read_archive(
+        _archive(tmp_path, name="odd.eaf", refmap="metainfo: nowhere.yml\n")) is None
+    assert plugins.read_archive(str(tmp_path / "absent.eaf")) is None

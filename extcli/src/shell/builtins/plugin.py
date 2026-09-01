@@ -289,10 +289,112 @@ def _parse_value(raw):
     return text
 
 
+class InstallCommand(Command):
+    """`plugin install <file.eaf>` — the last step of writing one.
+
+    It closes a loop that was open at both ends: the container can already
+    install elyxbuilder, so a plugin can be edited and built on the phone, and
+    the console could already reload one — but the archive still had to be
+    carried out to the client by hand. Now the whole round trip is commands:
+    edit, `elyb build`, `plugin install`, `plugin reload`.
+
+    The archive is read here before the client is handed anything. A mistyped
+    path or somebody's photo should be refused with a reason, not passed on to
+    fail somewhere with less to say.
+    """
+
+    name = "install"
+    summary = "install a plugin from a .eaf file"
+    usage = "plugin install <file.eaf> [--force]"
+    mutating = True
+
+    def run(self, ctx, args):
+        import os
+
+        flags = parse_flags(args, {"--force": "bool", "-f": "bool"})
+        if not flags.positional:
+            raise CommandError("plugin install needs a file", hint=self.usage)
+        plugins = ctx.require("plugins")
+        raw = flags.positional[0]
+        env = getattr(ctx, "env", None)
+        path = env.host(raw) if env is not None else raw
+        if os.path.isdir(path):
+            raise CommandError("%s is a directory" % raw,
+                               hint="build it first: elyb build -c 2 -nf")
+        if not os.path.isfile(path):
+            raise CommandError("no such file: %s" % raw)
+
+        data = plugins.read_archive(path)
+        if data is None:
+            raise CommandError("%s is not a plugin archive" % raw,
+                               hint="a .eaf is a zip with refmap.yml in it")
+        plugin_id = data.get("id")
+
+        # An install that lands on top of a plugin already there is an update,
+        # and saying so is the difference between "it worked" and "what did I
+        # just overwrite". Refusing it by default is the same courtesy `rootfs
+        # install` extends to a container somebody has set up.
+        existing = plugins.get(plugin_id)
+        force = flags.has("--force") or flags.has("-f")
+        if existing is not None and not force:
+            raise CommandError(
+                "%s is already installed (version %s)"
+                % (plugin_id, existing.version or "unknown"),
+                hint="plugin install %s --force to replace it with %s"
+                     % (raw, data.get("version") or "this build"))
+
+        policy = ctx.services.policy
+        if policy is not None:
+            policy.require(policy.PLUGIN_INSTALL,
+                           "%s %s" % (plugin_id, data.get("version") or ""),
+                           assume_yes=ctx.assume_yes)
+
+        ok, detail = plugins.install(path)
+        if not ok:
+            raise CommandError(detail)
+        rows = [(key, data[key]) for key in ("id", "name", "version", "author")
+                if data.get(key)]
+        return blocks.Result([
+            blocks.Fields(rows, title="installed"),
+            blocks.Summary(
+                "replaced %s" % plugin_id if existing is not None
+                else "%s installed — `plugin list` to see it" % plugin_id,
+                role=blocks.SUCCESS),
+        ])
+
+    def complete(self, ctx, args):
+        return _archive_paths(ctx, args[-1] if args else "")
+
+
+def _archive_paths(ctx, prefix):
+    """Completes towards .eaf files, since that is the only thing this takes."""
+    import os
+
+    env = getattr(ctx, "env", None)
+    if env is None:
+        return []
+    directory, _, tail = prefix.rpartition("/")
+    try:
+        entries = os.listdir(env.host(directory or "."))
+    except Exception:
+        return []
+    out = []
+    for entry in sorted(entries):
+        if not entry.startswith(tail):
+            continue
+        full = "%s/%s" % (directory, entry) if directory else entry
+        if os.path.isdir(env.host(full)):
+            out.append(full + "/")
+        elif entry.endswith(".eaf"):
+            out.append(full)
+    return out
+
+
 def build():
     return Group("plugin", "inspect and control plugins", [
         ListCommand(),
         InfoCommand(),
+        InstallCommand(),
         EnableCommand(),
         DisableCommand(),
         ReloadCommand(),

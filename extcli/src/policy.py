@@ -17,6 +17,7 @@ FS_WRITE = "fs.write"          # create/modify a file outside extCLI's own data
 FS_DELETE = "fs.delete"        # remove files or directories
 CLIENT_CONFIG = "client.config"  # change an exteraGram setting
 PLUGIN_STATE = "plugin.state"  # enable/disable/uninstall another plugin
+PLUGIN_INSTALL = "plugin.install"  # put code on the device that was not there
 SEND_MESSAGE = "send.message"  # put something in a chat
 SEND_TO_OTHERS = "send.foreign"  # output visible to someone other than the user
 CODE_EVAL = "code.eval"        # run arbitrary Python inside the client
@@ -28,6 +29,7 @@ NETWORK = "net.fetch"          # fetch something from outside the phone
 # the mode below, not rewrite call sites.
 SENSITIVE = frozenset({
     FS_DELETE,
+    PLUGIN_INSTALL,
     CLIENT_CONFIG,
     PLUGIN_STATE,
     SEND_TO_OTHERS,
