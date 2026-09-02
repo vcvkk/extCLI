@@ -53,6 +53,7 @@ class RootfsBackend(object):
         self.no_tmpfile = bool(no_tmpfile)
         self._loader = None
         self._which_cache = {}
+        self._stamp = None
 
     @property
     def bin_dirs(self):
@@ -76,10 +77,42 @@ class RootfsBackend(object):
             self._loader = guest.loader_in(self.root) or False
         return self._loader or None
 
+    def stamp(self):
+        """A value that changes when anything is added to or taken out of the
+        directories a command can be in.
+
+        Five `stat` calls, next to spawning a process. Cheap enough to do on
+        every lookup, which is what it takes for `apk add fastfetch` and then
+        `fastfetch` to work in the same session — and typing a command you
+        have just installed is the *normal* case, not an edge one.
+        """
+        marks = []
+        for directory in self.bin_dirs:
+            path = os.path.join(self.root, directory.lstrip("/"))
+            try:
+                info = os.stat(path)
+            except OSError:
+                marks.append(None)
+                continue
+            marks.append((info.st_mtime_ns, info.st_size))
+        return tuple(marks)
+
     def which(self, name):
-        """The guest path of a command, as the guest would write it."""
+        """The guest path of a command, as the guest would write it.
+
+        The answers are remembered, but only until a bin directory changes.
+        They used to be remembered for the life of the session, and a "no" was
+        remembered exactly as firmly as a "yes" — so installing something and
+        then running it answered "command not found", while `commands()` read
+        the directory afresh and cheerfully suggested the name that had just
+        been refused.
+        """
         if not self.available() or not name:
             return None
+        stamp = self.stamp()
+        if stamp != self._stamp:
+            self._which_cache = {}
+            self._stamp = stamp
         if name in self._which_cache:
             return self._which_cache[name]
         found = None
@@ -100,6 +133,7 @@ class RootfsBackend(object):
 
     def forget(self):
         self._which_cache = {}
+        self._stamp = None
         self._loader = None
 
     def command_for(self, argv):

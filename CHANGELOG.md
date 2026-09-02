@@ -88,8 +88,35 @@ end the options.
 
 ### Fixed
 
+- **Java callbacks were built once per call.** Every `dynamic_proxy` class was
+  defined inside the function that needed one, so the terminal's redraw timer
+  made a class per frame of output and a held soft key made one per repeat
+  tick. Chaquopy could then take an instance of the wrong one and die inside
+  `Handler.handleCallback` — `'_Run' object has no attribute
+  '_chaquopyGetDict'`. Now one class per interface, and a test walks the source
+  to keep it that way.
+- **A command installed in an open console could not be run in it.** `which`
+  remembered a "no" exactly as firmly as a "yes" and nothing ever cleared it,
+  while the suggestion list read the directory afresh — so `apk add fastfetch`
+  then `fastfetch` answered "command not found: fastfetch. did you mean:
+  fastfetch". The answers are now forgotten when a bin directory changes.
+- **A hardlink the kernel refuses is copied instead.** `apk add unzip` failed
+  on exactly one file, `usr/bin/zipinfo`, which is the only hardlink in the
+  package — unzip and zipinfo are one program under two names. Whether an
+  ordinary hardlink works depends on where the container sits: an app's own
+  storage is ext4 and allows it, emulated storage is FUSE and has never
+  supported them. A hardlink asks for one thing — this content, under that
+  name too — and a copy delivers it, so the loader copies when the kernel says
+  no. A link through `/proc/self/fd` is never copied: that path names a
+  different descriptor in the supervisor than in the guest.
+- **An install is judged by what arrived, not by the exit status.** apk exits 1
+  when one file of one package could not be extracted, with all sixty packages
+  installed and working; that was reported as a failed install, and the
+  settling-in step never ran.
+- `rootfs probe writes` now measures ordinary hardlinks as well, which is the
+  check that would have named the cause above in a sentence.
 - `rootfs mounts` never showed `/patch`, although the console mounted it: two
   lists of the mounts had drifted apart.
 - The plugin-install method is taken from the client rather than guessed.
 
-905 tests pass.
+927 tests pass.

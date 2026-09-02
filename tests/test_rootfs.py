@@ -756,6 +756,69 @@ def test_the_backend_finds_guest_programs_by_guest_path(tmp_path):
     assert backend.which("nothing_here") is None
 
 
+def test_a_command_installed_now_can_be_run_now(tmp_path):
+    """`apk add fastfetch` then `fastfetch` used to answer "command not
+    found", and — because the suggestion list reads the directory afresh —
+    followed it with "did you mean: fastfetch".
+
+    A "no" was cached exactly as firmly as a "yes", and nothing ever cleared
+    it: installing something in an open console left it unrunnable until the
+    console was closed and opened again.
+    """
+    root = installed_rootfs(tmp_path)
+    backend = backend_module.RootfsBackend(root, "/system/bin/linker64")
+    assert backend.which("fastfetch") is None
+
+    new = os.path.join(root, "usr", "bin", "fastfetch")
+    with open(new, "w") as handle:
+        handle.write("#!/bin/sh\n")
+    os.chmod(new, 0o755)
+
+    assert backend.which("fastfetch") == "/usr/bin/fastfetch"
+    assert "fastfetch" in backend.commands()
+
+
+def test_a_command_that_has_been_removed_stops_being_found(tmp_path):
+    """The other way round, and the same cause: a remembered "yes" would have
+    the shell try to start something that is not there."""
+    root = installed_rootfs(tmp_path)
+    backend = backend_module.RootfsBackend(root, "/system/bin/linker64")
+    assert backend.which("awk") == "/usr/bin/awk"
+
+    os.remove(os.path.join(root, "usr", "bin", "awk"))
+    assert backend.which("awk") is None
+
+
+def test_the_answers_are_still_remembered_between_changes(tmp_path):
+    """Or every command in a pipeline would walk the bin directories again."""
+    root = installed_rootfs(tmp_path)
+    backend = backend_module.RootfsBackend(root, "/system/bin/linker64")
+    backend.which("ls")
+
+    looked = []
+    real = layout.resolve
+
+    def counted(*args):
+        looked.append(args)
+        return real(*args)
+
+    layout.resolve = counted
+    try:
+        for _ in range(5):
+            assert backend.which("ls") == "/bin/ls"
+    finally:
+        layout.resolve = real
+    assert looked == []
+
+
+def test_what_which_says_and_what_the_suggestions_say_agree(tmp_path):
+    """They disagreed, which is what made the message absurd."""
+    root = installed_rootfs(tmp_path)
+    backend = backend_module.RootfsBackend(root, "/system/bin/linker64")
+    for name in backend.commands():
+        assert backend.which(name) is not None, name
+
+
 def test_the_backend_builds_the_command_through_the_linker(tmp_path):
     root = installed_rootfs(tmp_path)
     backend = backend_module.RootfsBackend(root, "/system/bin/linker64")
@@ -2647,3 +2710,117 @@ def test_the_provider_follows_the_package(tmp_path):
             raise RuntimeError("no context here")
 
     assert intents.authority(Mute()) == intents.FALLBACK_AUTHORITY
+
+
+# --------------------------------- an install that complains but does install
+
+class _Apk(object):
+    """A package manager that installs what it is asked for, and may still
+    exit non-zero — which is exactly what `apk add unzip` does here."""
+
+    def __init__(self, root, status=0, message="", skip=()):
+        self.root = str(root)
+        self.status = status
+        self.message = message
+        self.skip = set(skip)
+        self.calls = []
+
+    def run(self, argv, **kwargs):
+        from extcli_src.backends.system import Result
+
+        self.calls.append(list(argv))
+        database = os.path.join(self.root, "lib/apk/db/installed")
+        os.makedirs(os.path.dirname(database), exist_ok=True)
+        with open(database, "a") as handle:
+            for name in argv[3:]:
+                if name not in self.skip:
+                    handle.write("P:%s\nV:1\n\n" % name)
+        return Result(self.status, "", self.message)
+
+
+def _selection_of(*names):
+    from extcli_src.rootfs import packages as packages_module
+
+    groups = {}
+    for group in packages_module.GROUPS:
+        chosen = [one for one in group.names if one in names]
+        if chosen:
+            groups[group.name] = chosen
+    return packages_module.Selection(groups)
+
+
+def test_an_install_is_judged_by_what_arrived(tmp_path):
+    """`apk add unzip` exits 1 when one file of one package cannot be
+    extracted — usr/bin/zipinfo, the only hardlink in it — with all sixty
+    packages installed and working. That used to be reported as a failed
+    install, which left the settling-in step unrun and had somebody re-running
+    a command that had already done its job."""
+    root = str(tmp_path / "rootfs")
+    os.makedirs(os.path.join(root, "lib/apk/db"))
+    selection = _selection_of("git")
+    runner = _Apk(root, status=1,
+                  message="ERROR: unzip-6.0-r16: failed to extract "
+                          "usr/bin/zipinfo: Permission denied")
+
+    outcome = toolbox.install(str(tmp_path / "res"), str(tmp_path / "state"),
+                              root, "arm64-v8a", "/l", selection,
+                              runner=runner)
+    assert outcome.ok
+    assert "git" in outcome.installed
+    # and it does not pretend nothing happened
+    assert "zipinfo" in outcome.sentence()
+    assert "installed" in outcome.sentence()
+
+
+def test_an_install_that_really_failed_still_fails(tmp_path):
+    root = str(tmp_path / "rootfs")
+    os.makedirs(os.path.join(root, "lib/apk/db"))
+    runner = _Apk(root, status=1, message="ERROR: unable to select packages",
+                  skip=("git",))
+
+    outcome = toolbox.install(str(tmp_path / "res"), str(tmp_path / "state"),
+                              root, "arm64-v8a", "/l", _selection_of("git"),
+                              runner=runner)
+    assert not outcome.ok
+    assert "unable to select packages" in outcome.sentence()
+
+
+def test_a_package_manager_that_says_nothing_went_wrong_is_still_checked(
+        tmp_path):
+    """Exit zero and the package not there is the other half of the same
+    rule: what arrived decides."""
+    root = str(tmp_path / "rootfs")
+    os.makedirs(os.path.join(root, "lib/apk/db"))
+    runner = _Apk(root, status=0, skip=("git",))
+
+    outcome = toolbox.install(str(tmp_path / "res"), str(tmp_path / "state"),
+                              root, "arm64-v8a", "/l", _selection_of("git"),
+                              runner=runner)
+    assert not outcome.ok
+    assert "did not arrive" in outcome.sentence()
+
+
+def test_a_clean_install_says_nothing_extra(tmp_path):
+    root = str(tmp_path / "rootfs")
+    os.makedirs(os.path.join(root, "lib/apk/db"))
+    outcome = toolbox.install(str(tmp_path / "res"), str(tmp_path / "state"),
+                              root, "arm64-v8a", "/l", _selection_of("git"),
+                              runner=_Apk(root))
+    assert outcome.ok
+    assert outcome.sentence() == "1 packages installed"
+
+
+def test_a_hardlink_is_measured_rather_than_assumed(tmp_path):
+    """It is the call that failed, and whether it works is a fact about where
+    the container happens to sit — an app's own storage allows it, emulated
+    storage has never supported it at all."""
+    from extcli_src.rootfs import writes
+
+    results = writes.run(str(tmp_path))
+    assert writes.HARDLINK in writes.ORDER
+    status, _detail = results[writes.HARDLINK]
+    assert status in (writes.OK, writes.FAILED)
+    # this machine is ordinary, so it works here
+    assert status == writes.OK
+    assert not os.path.exists(os.path.join(str(tmp_path),
+                                           ".extcli-write-test"))

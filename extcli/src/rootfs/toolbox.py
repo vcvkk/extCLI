@@ -107,8 +107,11 @@ class Outcome(object):
 
     def sentence(self):
         if self.ok:
-            return ("%d packages installed" % len(self.installed)
+            text = ("%d packages installed" % len(self.installed)
                     if self.installed else "everything was already there")
+            # `ok` with something to say: everything asked for is there and
+            # the package manager still complained on the way out
+            return "%s, but %s" % (text, self.detail) if self.detail else text
         return self.detail or "the packages could not be installed"
 
 
@@ -149,23 +152,29 @@ def install(res_dir, state_dir, root, abi, linker, selection,
                 pass
 
     listener = watch if (on_progress or on_output) else None
+    complaint = None
     if from_apk:
-        failed = _run(runner, ["apk", "add", "--no-cache"] + from_apk,
-                      listener)
-        if failed is not None:
-            return failed
+        complaint = _run(runner, ["apk", "add", "--no-cache"] + from_apk,
+                         listener)
     for name in from_pip:
         # one at a time: a tool that is not on PyPI should not take the others
         # down with it, and the name of the one that failed is the useful part
         failed = _run(runner, _pip_command(root, name), listener)
-        if failed is not None:
-            return failed
+        if failed is not None and complaint is None:
+            complaint = failed
 
+    # What arrived decides, not what the package manager said on the way out.
+    # `apk add unzip` exits 1 when one file of one package could not be
+    # extracted — usr/bin/zipinfo, the one hardlink in it — with all sixty
+    # packages installed and working. Reporting that as a failed install left
+    # `_settle_in` unrun and somebody re-running a command that had already
+    # done its job.
     left = [name for name in names if not present(root, name)]
     if left:
-        return Outcome(False, "%s did not arrive" % ", ".join(left[:3]))
+        return Outcome(False, complaint.detail if complaint
+                       else "%s did not arrive" % ", ".join(left[:3]))
     _settle_in(res_dir, root, names)
-    return Outcome(True, "", names)
+    return Outcome(True, complaint.detail if complaint else "", names)
 
 
 def _run(runner, argv, listener):

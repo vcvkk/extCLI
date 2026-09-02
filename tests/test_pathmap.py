@@ -15,7 +15,10 @@ leads out of the rootfs to a file that does not exist, which is exactly how
 `rootfs probe launch` once came back with "unable to open file .../rootfs/bin/sh".
 """
 
+import errno
 import os
+import re
+from pathlib import Path
 import shutil
 import subprocess
 
@@ -226,3 +229,58 @@ def test_a_path_that_has_been_mapped_once_is_not_mapped_again(harness, root,
     # and a path the guest means is still the guest's
     assert kind(harness, root, "/bin/busybox", extra) == "guest"
     assert kind(harness, root, "/", extra) == "guest"
+
+
+# ---------------------------------------------- the numbers the loader is made of
+
+LOADER = Path(__file__).resolve().parent.parent / "native" / "loader.c"
+
+
+def defined(name):
+    """A `#define NAME <number>` from the loader, as an int."""
+    match = re.search(r"^#define %s\s+(-?\d+)\s*$" % name, LOADER.read_text(),
+                      re.MULTILINE)
+    assert match, "%s is not defined in loader.c" % name
+    return int(match.group(1))
+
+
+def test_the_errnos_the_loader_names_are_the_errnos_they_are():
+    """Freestanding means no errno.h, so these are written out by hand — and a
+    wrong one here is a hardlink fallback that never fires, or one that fires
+    on the wrong failure."""
+    for name in ("EPERM", "EACCES", "EXDEV", "EMLINK", "ENOSYS", "EOPNOTSUPP"):
+        assert defined(name) == getattr(errno, name), name
+
+
+def test_the_syscall_numbers_are_the_generic_table():
+    """aarch64 uses the asm-generic numbers, and these are copied from it.
+
+    Two of them are the reason `apk add unzip` could fail on exactly one file:
+    the loader watches for linkat and, when the kernel refuses, copies instead.
+    A number wrong by one would have it watching something else entirely.
+    """
+    for name, number in (("openat", 56), ("close", 57), ("read", 63),
+                         ("write", 64), ("readlinkat", 78), ("fstat", 80),
+                         ("unlinkat", 35), ("linkat", 37)):
+        assert defined("SYS_" + name) == number, name
+
+
+def test_linkat_is_watched_on_the_way_out_and_translated_on_the_way_in():
+    """Both, or the copy is made between paths the guest meant and the
+    supervisor cannot open."""
+    source = LOADER.read_text()
+    assert "{ 37, ARG1 | ARG3," in source           # both paths translated
+    assert "SYS_linkat) {" in source and "mend_link" in source
+
+
+def test_a_link_through_proc_self_is_never_copied():
+    """apk links an unnamed file into place through /proc/self/fd/N. Read in
+    the supervisor that names *its* descriptor N, so copying from it would put
+    some file of ours where the guest wanted its download."""
+    source = LOADER.read_text()
+    assert "means_the_same_here" in source
+    assert '"/proc/"' in source
+    # and it is asked before anything is opened
+    guard = source.index("means_the_same_here(guest)")
+    opened = source.index("static int copy_file")
+    assert guard > opened, "the check must be in host_path_of, not in copy_file"

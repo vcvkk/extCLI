@@ -346,6 +346,140 @@ static void watch_for_seccomp(void)
  */
 #define O_TMPFILE_BIT 020000000
 #define EOPNOTSUPP 95
+
+/* A second name for a file that already has one.
+ *
+ * `apk add unzip` installed every file in the package except usr/bin/zipinfo,
+ * which is the one hardlink in it — unzip and zipinfo are the same program
+ * under two names. The call comes back refused, and which refusal depends on
+ * where the rootfs happens to sit: an app's own storage is ext4 and allows it,
+ * emulated storage is FUSE and has never supported hardlinks at all.
+ *
+ * A hardlink asks for one thing — this content, under that name too — and a
+ * copy delivers exactly that. The two differ in ways that matter to a
+ * filesystem and, for the contents of a package, to nobody: the link count is
+ * not two, and writing through one name does not show through the other.
+ * Nothing in a rootfs writes to its own programs.
+ *
+ * So when the kernel refuses, the supervisor copies instead. It runs as the
+ * same uid on the same filesystem, so what the guest could not do it can do
+ * plainly, and the guest is told the link worked. This is what proot does, for
+ * the same reason.
+ */
+#define SYS_linkat 37
+#define SYS_unlinkat 35
+#define SYS_fstat 80
+#define EPERM 1
+#define EACCES 13
+#define EXDEV 18
+#define EMLINK 31
+#define ENOSYS 38
+#define O_RDONLY 0
+#define O_WRONLY 1
+#define O_CREAT 0100
+#define O_EXCL 0200
+#define O_TRUNC 01000
+
+/* One page at a time. A program in a rootfs is a couple of hundred kilobytes,
+ * and this runs once per hardlink in a package — which for most packages is
+ * never. */
+#define COPY_CHUNK 65536
+static char copy_buffer[COPY_CHUNK];
+
+/* The kernel's `struct stat` for a 64-bit asm-generic architecture, which
+ * aarch64 is. Written out rather than reached into by offset: the one field
+ * wanted is the mode, and getting its position wrong would copy a program
+ * without its execute bit — a failure that would look like anything but this.
+ * Spelled the way the kernel spells it so it can be checked against
+ * include/uapi/asm-generic/stat.h by reading, not by counting.
+ */
+struct kernel_stat {
+	u64 st_dev;
+	u64 st_ino;
+	u32 st_mode;
+	u32 st_nlink;
+	u32 st_uid;
+	u32 st_gid;
+	u64 st_rdev;
+	u64 __pad1;
+	s64 st_size;
+	int st_blksize;
+	int __pad2;
+	s64 st_blocks;
+	s64 st_atime_sec;
+	u64 st_atime_nsec;
+	s64 st_mtime_sec;
+	u64 st_mtime_nsec;
+	s64 st_ctime_sec;
+	u64 st_ctime_nsec;
+	u32 __unused[2];
+};
+
+static int copy_file(const char *from, const char *to)
+{
+	struct kernel_stat info;
+	long source;
+	long target;
+	unsigned int mode = 0755;
+	int failed = 0;
+
+	source = sys4(SYS_openat, AT_FDCWD, from, O_RDONLY, 0);
+	if (source < 0)
+		return 0;
+	if (sys3(SYS_fstat, source, &info, 0) == 0) {
+		/* the permission bits only; the type bits belong to the
+		 * original and a copy is always an ordinary file */
+		if (info.st_mode & 07777)
+			mode = info.st_mode & 07777;
+	}
+	/* O_EXCL: a hardlink that would have overwritten something is a
+	 * different question, and answering it by truncating somebody's file
+	 * is not this function's business */
+	target = sys4(SYS_openat, AT_FDCWD, to,
+		      O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, mode);
+	if (target < 0) {
+		sys1(SYS_close, source);
+		return 0;
+	}
+	for (;;) {
+		s64 got = sys3(SYS_read, source, copy_buffer, COPY_CHUNK);
+		s64 done = 0;
+
+		if (got < 0) {
+			failed = 1;
+			break;
+		}
+		if (got == 0)
+			break;
+		while (done < got) {
+			s64 wrote = sys3(SYS_write, target,
+					 copy_buffer + done, got - done);
+			if (wrote <= 0) {
+				failed = 1;
+				break;
+			}
+			done += wrote;
+		}
+		if (failed)
+			break;
+	}
+	sys1(SYS_close, source);
+	sys1(SYS_close, target);
+	if (failed) {
+		/* a half-written program is worse than a missing one: it would
+		 * run, and fail somewhere with nothing to do with this */
+		sys3(SYS_unlinkat, AT_FDCWD, to, 0);
+		return 0;
+	}
+	return 1;
+}
+
+/* Is this the kind of refusal a copy can stand in for? */
+static int link_refused(long result)
+{
+	return result == -EPERM || result == -EACCES || result == -EXDEV ||
+	       result == -EMLINK || result == -ENOSYS;
+}
 #define SYS_OPENAT 56
 
 struct iovec {
@@ -879,6 +1013,87 @@ static void translate_paths(long pid, int slot, int number)
 		tracee_changed[slot] = (unsigned char)used;
 }
 
+/* A refused hardlink, made good with a copy.
+ *
+ * Runs on the way out, once the kernel has said no. Doing it on the way in
+ * would mean copying where a link would have worked, which is slower and — for
+ * a program that later counts links — different for no reason.
+ *
+ * The registers still hold what the entry side put there: aarch64 hands back
+ * the result in x0 and leaves x1..x5 alone, so the two paths are still the
+ * translated ones. They are read back rather than remembered, and translated
+ * here if the entry side did not, so this is right whether or not there were
+ * mounts to rewrite through.
+ */
+static u64 mended_links;
+
+/* Does this path mean the same thing to the supervisor as to the guest?
+ *
+ * /proc/self does not, and that is the whole reason to ask. apk links an
+ * unnamed file into place through /proc/self/fd/N; read in this process that
+ * names *our* descriptor N, and copying from it would put some file of the
+ * supervisor's where the guest wanted its download. A refusal here leaves the
+ * guest with the error it already had, which is the honest outcome — and one
+ * it has a fallback for, because `rootfs writes` measures that link and the
+ * loader tells the guest to stop using it when it fails.
+ */
+static int means_the_same_here(const char *path)
+{
+	static const char proc[] = "/proc/";
+
+	for (int i = 0; i < 6; i++)
+		if (path[i] != proc[i])
+			return 1;
+	return 0;
+}
+
+static int host_path_of(long pid, u64 address, char *out)
+{
+	char guest[GUEST_PATH_MAX];
+
+	if (!address || !read_string(pid, address, guest, GUEST_PATH_MAX))
+		return 0;
+	if (guest[0] != '/')
+		return 0;                    /* relative: the guest's own cwd */
+	if (!means_the_same_here(guest))
+		return 0;
+	if (already_host(guest) || passed_through(guest)) {
+		copy_string(out, guest, GUEST_PATH_MAX);
+		return 1;
+	}
+	return map_path(guest, 0, out);
+}
+
+static void mend_link(long pid, int slot)
+{
+	u64 registers[34];
+	struct iovec where = { registers, sizeof(registers) };
+	char from[GUEST_PATH_MAX];
+	char to[GUEST_PATH_MAX];
+
+	(void)slot;
+	if (sys4(SYS_ptrace, PTRACE_GETREGSET, pid, NT_PRSTATUS, &where) < 0)
+		return;
+	if (!link_refused((long)registers[0]))
+		return;
+	/* linkat(olddirfd, oldpath, newdirfd, newpath, flags): x1 and x3 are
+	 * the paths. A relative one is refused by host_path_of, which is the
+	 * right answer — it would be relative to a directory fd this has no
+	 * way to stand in for. An absolute path ignores the fd anyway. */
+	if (!host_path_of(pid, registers[1], from) ||
+	    !host_path_of(pid, registers[3], to))
+		return;
+	if (!copy_file(from, to))
+		return;
+	/* the registers are already here, so the answer goes back the same way
+	 * rather than through another pair of ptrace calls */
+	registers[0] = 0;
+	where.base = registers;
+	where.length = sizeof(registers);
+	sys4(SYS_ptrace, PTRACE_SETREGSET, pid, NT_PRSTATUS, &where);
+	mended_links++;
+}
+
 /* getcwd hands back where the guest is, in host terms. The guest has never
  * heard of that directory. */
 static void shorten_cwd(long pid, int slot)
@@ -1359,6 +1574,11 @@ static void report_trace(long *recent, int count, u64 total, int status)
 			put("\n", 1);
 		}
 	}
+	if (mended_links) {
+		put("extcli-loader: copied ", 22);
+		put_number(mended_links);
+		put(" hardlink(s) the kernel refused\n", 32);
+	}
 	if (WIFSIGNALED(status)) {
 		put("extcli-loader: the guest was killed by signal ", 46);
 		put_number((u64)WTERMSIG(status));
@@ -1505,6 +1725,8 @@ static void supervise(long first, int tracing)
 				if (tracee_cancelled[slot]) {
 					set_result(pid, tracee_value[slot]);
 					tracee_cancelled[slot] = 0;
+				} else if (tracee_number[slot] == SYS_linkat) {
+					mend_link(pid, slot);
 				}
 				if (tracee_number[slot] == SYS_EXECVE ||
 				    tracee_number[slot] == SYS_EXECVEAT) {

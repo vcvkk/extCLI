@@ -25,13 +25,15 @@ import os
 TMPFILE = "tmpfile"
 LINKAT = "linkat"
 RENAME = "rename"
+HARDLINK = "hardlink"
 
-ORDER = (TMPFILE, LINKAT, RENAME)
+ORDER = (TMPFILE, LINKAT, RENAME, HARDLINK)
 
 LABELS = {
     TMPFILE: "create an unnamed file (O_TMPFILE)",
     LINKAT: "link it into place (/proc/self/fd)",
     RENAME: "write a named temporary and rename it",
+    HARDLINK: "give a file a second name (link)",
 }
 
 OK = "ok"
@@ -80,6 +82,22 @@ def run(directory):
                 os.unlink(target)
             except Exception as e:
                 results[LINKAT] = (FAILED, _reason(e))
+
+        # A second name for a file that already has one. Not the same
+        # question as LINKAT above, which links an inode that has no name at
+        # all: this is what a package manager does when a package ships one
+        # program under two names, and it is the call that made `apk add
+        # unzip` fail on exactly one file — usr/bin/zipinfo, the only hardlink
+        # in the package.
+        try:
+            first = os.path.join(workspace, "one")
+            with open(first, "wb") as file:
+                file.write(b"extcli")
+            second = os.path.join(workspace, "two")
+            os.link(first, second)
+            results[HARDLINK] = (OK, "linked")
+        except Exception as e:
+            results[HARDLINK] = (FAILED, _reason(e))
 
         # the older way, and the one every program falls back to
         try:
@@ -143,8 +161,18 @@ def verdict(results):
         return results.get(name, (UNSUPPORTED, ""))[1]
 
     if status(LINKAT) == OK:
-        return True, ("a package manager can write files the way apk does, so "
-                      "whatever stopped it is not this")
+        note = ("a package manager can write files the way apk does, so "
+                "whatever stopped it is not this")
+        if status(HARDLINK) == FAILED:
+            # not a reason to answer no: apk installed sixty packages here and
+            # failed on one file. But it is the reason it failed on that one,
+            # and it is worth saying rather than leaving somebody to find it
+            # in the middle of an install
+            note += ("; a file cannot be given a second name here (%s), so a "
+                     "package shipping one program under two — unzip and "
+                     "zipinfo — loses the second unless the loader copies it"
+                     % (detail(HARDLINK) or "it fails"))
+        return True, note
     if status(RENAME) == OK:
         reason = detail(LINKAT) or "it fails"
         return False, ("an unnamed file cannot be linked into place here (%s), "
