@@ -70,6 +70,51 @@ def _write_note(state_root, name, data):
         json.dump(data, handle, indent=2, sort_keys=True)
 
 
+PLUGIN, CLIENT = "plugin", "client"
+
+
+def kind(state_root, name):
+    """What sort of workspace this is; they are built in different ways."""
+    return note(state_root, name).get("kind") or PLUGIN
+
+
+def create_client(work_root, state_root, name, client, label=None,
+                  replace=False, on_progress=None):
+    """Lays the client out as a workspace. Returns (ok, detail).
+
+    Same two copies as a plugin workspace, for the same reason — but what is
+    copied is the index and the hooks, not the client's code, which stays in
+    the APK where it already is.
+    """
+    from . import client as client_module
+
+    work = work_dir(work_root, name)
+    if os.path.isdir(work):
+        if not replace:
+            return False, "there is already a workspace called %s" % name
+        drop(work_root, state_root, name)
+    os.makedirs(work, exist_ok=True)
+
+    ok, detail = client_module.lay_out(work, client, on_progress=on_progress)
+    if not ok:
+        _remove(work)
+        return False, detail
+
+    ok, copied = pack.copy_tree(work, origin_dir(state_root, name))
+    if not ok:
+        _remove(work)
+        return False, "could not keep a copy to compare against: %s" % copied
+
+    _write_note(state_root, name, {
+        "kind": CLIENT,
+        "source": client.path,
+        "label": label or "the client",
+        "version": "",
+        "opened": int(time.time()),
+    })
+    return True, work
+
+
 def create(work_root, state_root, name, source, label=None, version=None,
            replace=False):
     """Lays `source` out as a workspace. Returns (ok, detail).
@@ -106,6 +151,7 @@ def create(work_root, state_root, name, source, label=None, version=None,
         return False, "could not keep a copy to compare against: %s" % detail
 
     _write_note(state_root, name, {
+        "kind": PLUGIN,
         "source": source,
         "label": label or name,
         "version": version or "",

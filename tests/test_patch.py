@@ -643,8 +643,9 @@ def test_the_command_is_registered():
 
     group = build_registry().get("patch")
     assert group is not None
-    assert set(group.subcommands) == {"open", "list", "diff", "code", "build",
-                                      "revert", "drop"}
+    assert set(group.subcommands) == {"open", "list", "diff", "find", "dis",
+                                      "hook", "code", "build", "revert",
+                                      "drop"}
 
 
 def test_every_subcommand_says_how_to_use_it():
@@ -659,14 +660,14 @@ def test_the_ones_that_change_something_say_so():
     from extcli_src.shell.builtins import build_registry
 
     group = build_registry().get("patch")
-    for name in ("open", "build", "revert", "drop", "code"):
+    for name in ("open", "build", "revert", "drop", "code", "hook"):
         assert group.subcommands[name].mutating is True, name
-    for name in ("list", "diff"):
+    for name in ("list", "diff", "find", "dis"):
         assert group.subcommands[name].mutating is False, name
 
 
-@pytest.mark.parametrize("name", ["list", "diff", "code", "build", "open",
-                                  "drop"])
+@pytest.mark.parametrize("name", ["list", "diff", "find", "dis", "hook",
+                                  "code", "build", "open", "drop"])
 def test_help_needs_no_device(name):
     from extcli_src.shell.builtins import build_registry
 

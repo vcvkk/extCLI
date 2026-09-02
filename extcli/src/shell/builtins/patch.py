@@ -27,6 +27,7 @@ name for.
 import os
 
 from ...render import blocks
+from ...utils import log
 from ..registry import Command, CommandError, Group, parse_flags, suggest
 
 # How many files a report lists before it stops and says how many are left. A
@@ -102,18 +103,33 @@ def _guest(ctx, path):
 
 
 class OpenCommand(Command):
+    """`patch open` — a workspace on a plugin, or on the client itself.
+
+    Two very different things behind one word, because from where somebody is
+    standing they are the same thing: something on this phone behaves in a way
+    they want changed. What differs is what can be done about it, and that is
+    decided by what the thing is made of rather than by which command was
+    typed — a plugin is Python and can be edited and rebuilt, the client is
+    Java and can only be hooked.
+    """
+
     name = "open"
-    summary = "unpack an installed plugin into a workspace"
-    usage = "patch open <plugin-id> [--name <workspace>] [--force]"
+    summary = "unpack a plugin, or the client, into a workspace"
+    usage = ("patch open <plugin-id|client> [--name <workspace>] "
+             "[--apk <file>] [--force]")
     mutating = True
 
     def run(self, ctx, args):
         from ...patch import store as store_module
 
         flags = parse_flags(args, {"--name": "str", "-n": "str",
+                                   "--apk": "str",
                                    "--force": "bool", "-f": "bool"})
         if not flags.positional:
-            raise CommandError("patch open needs a plugin", hint=self.usage)
+            raise CommandError("patch open needs a plugin, or `client`",
+                               hint=self.usage)
+        if flags.positional[0] == "client" or flags.get("--apk"):
+            return self._client(ctx, flags)
         target = _resolve(ctx, flags.positional[0])
         if not target.path:
             raise CommandError(
@@ -149,15 +165,67 @@ class OpenCommand(Command):
             role=blocks.SUCCESS))
         return blocks.Result(result)
 
+    def _client(self, ctx, flags):
+        """The client itself: fifty thousand classes, indexed once."""
+        from ...patch import client as client_module
+        from ...patch import store as store_module
+        from ...patch import workspace as workspace_module
+
+        chosen = flags.get("--apk")
+        if chosen:
+            env = getattr(ctx, "env", None)
+            paths = [env.host(chosen) if env is not None else chosen]
+        else:
+            paths = client_module.apk_paths()
+        if not paths:
+            raise CommandError(
+                "cannot find the client's APK",
+                hint="patch open client --apk <file> to point at one")
+        client = client_module.Client(paths[0])
+        if not client.exists():
+            raise CommandError("no such file: %s" % client.path)
+
+        name = workspace_module.workspace_name(
+            flags.get("--name") or flags.get("-n") or "client")
+        work_root, state_root = _roots()
+        # this is half a minute of work; a console with nothing on it for half
+        # a minute is a console that looks stuck
+        say = ctx.live_text
+        ok, detail = store_module.create_client(
+            work_root, state_root, name, client,
+            replace=flags.has("--force") or flags.has("-f"),
+            on_progress=(lambda text: say("  %s\n" % text))
+            if say is not None else None)
+        if not ok:
+            raise CommandError(detail,
+                               hint="patch open client --force replaces it")
+
+        entries = client_module.read_index(detail)
+        result = [blocks.Fields(
+            [("workspace", name),
+             ("from", os.path.basename(client.path)),
+             ("classes", str(len(entries))),
+             ("dex files", str(len(client.dex_names()))),
+             ("path", _guest(ctx, detail))], title="opened")]
+        warning = _mount_warning()
+        if warning:
+            result.append(blocks.Blank())
+            result.append(blocks.Text(warning, role=blocks.WARN))
+        result.append(blocks.Summary(
+            "`patch find <text>` to look, `patch hook <class> <method>` to "
+            "start", role=blocks.SUCCESS))
+        return blocks.Result(result)
+
     def complete(self, ctx, args):
-        if not ctx.has("plugins"):
-            return []
         prefix = args[-1] if args else ""
+        out = ["client"] if "client".startswith(prefix) else []
+        if not ctx.has("plugins"):
+            return out
         try:
-            return sorted(p.id for p in ctx.services.plugins.list_plugins()
-                          if p.id.startswith(prefix))
+            return out + sorted(p.id for p in ctx.services.plugins.list_plugins()
+                                if p.id.startswith(prefix))
         except Exception:
-            return []
+            return out
 
 
 def _resolve(ctx, query):
@@ -299,6 +367,9 @@ class BuildCommand(Command):
         store = _store()
         work = store.work_dir(work_root, name)
 
+        if store.kind(state_root, name) == store.CLIENT:
+            return self._client(ctx, flags, name, work)
+
         if store.openable(state_root, name):
             changed = store.changes(work_root, state_root, name)
         else:
@@ -325,6 +396,45 @@ class BuildCommand(Command):
             result.append(blocks.Blank())
             result.append(blocks.Text(changed.lines(limit=LISTED)))
 
+        if flags.has("--install") or flags.has("-i"):
+            result.append(blocks.Blank())
+            result.append(self._install(ctx, target, mark))
+            return blocks.Result(result)
+        result.append(blocks.Summary(
+            "`plugin install %s` to put it on" % _guest(ctx, target),
+            role=blocks.SUCCESS))
+        return blocks.Result(result)
+
+    def _client(self, ctx, flags, name, work):
+        """A client patch: the hooks, and nothing else in the workspace.
+
+        The index and the listings are what you read while deciding what to
+        write. Putting them in the archive would ship two megabytes of class
+        names to do nothing.
+        """
+        from ...patch import hooks as hooks_module
+        from ...patch import workspace as workspace_module
+
+        found = hooks_module.hook_files(work)
+        if not found:
+            raise CommandError(
+                "there are no hooks in %s to build" % name,
+                hint="patch hook <class> <method> writes one")
+        mark = flags.get("--mark") or workspace_module.token()
+        target = self._target(ctx, flags, mark)
+        _work_root, state_root = _roots()
+        source = _store().note(state_root, name).get("source") or "the client"
+        ok, detail = hooks_module.build(work, target, mark,
+                                        source=os.path.basename(source))
+        if not ok:
+            raise CommandError(detail)
+
+        names = [one for one, _path in found]
+        result = [blocks.Fields(
+            [("name", detail), ("id", workspace_module.plugin_id(mark)),
+             ("hooks", ", ".join(names)),
+             ("file", _guest(ctx, target)), ("size", _size(target))],
+            title="built")]
         if flags.has("--install") or flags.has("-i"):
             result.append(blocks.Blank())
             result.append(self._install(ctx, target, mark))
@@ -372,6 +482,214 @@ def _size(path):
         return purge.human_size(os.path.getsize(path))
     except Exception:
         return "?"
+
+
+def _client_of(ctx, name):
+    """The APK a client workspace was opened on."""
+    from ...patch import client as client_module
+
+    _work_root, state_root = _roots()
+    store = _store()
+    if store.kind(state_root, name) != store.CLIENT:
+        raise CommandError("%s is a plugin workspace, not the client" % name,
+                           hint="patch open client")
+    source = store.note(state_root, name).get("source") or ""
+    client = client_module.Client(source)
+    if not client.exists():
+        raise CommandError("the APK this was opened on has gone: %s" % source,
+                           hint="patch open client --force to open it again")
+    return client
+
+
+class FindCommand(Command):
+    """`patch find` — where something is in fifty thousand classes.
+
+    Strings are worth the flag they cost. A label somebody can see on screen
+    is usually the fastest way into a client: search for the text, and the
+    code that puts it there is the code they are looking for.
+    """
+
+    name = "find"
+    summary = "search the client's classes, methods or strings"
+    usage = "patch find <text> [--methods] [--strings] [--limit N]"
+
+    def run(self, ctx, args):
+        flags = parse_flags(args, {"--methods": "bool", "-m": "bool",
+                                   "--strings": "bool", "-s": "bool",
+                                   "--classes": "bool", "-c": "bool",
+                                   "--limit": "int", "-n": "int"})
+        rest = list(flags.positional)
+        name = _one(ctx, rest)
+        if rest and rest[0] == name:
+            rest.pop(0)
+        if not rest:
+            raise CommandError("patch find needs something to look for",
+                               hint=self.usage)
+        client = _client_of(ctx, name)
+        kind = ("methods" if flags.has("--methods") or flags.has("-m")
+                else "strings" if flags.has("--strings") or flags.has("-s")
+                else "classes")
+        limit = flags.get("--limit") or flags.get("-n") or 60
+        say = ctx.live_text
+        found = client.search(
+            rest[0], kind=kind, limit=int(limit),
+            on_progress=(lambda text: say("  %s\n" % text))
+            if say is not None else None)
+        if not found:
+            return blocks.summary("nothing in the client matches %r"
+                                  % rest[0])
+        return blocks.Result([
+            blocks.Table([(text, dex_name) for dex_name, text in found]),
+            blocks.Summary("%d %s%s" % (len(found), kind[:-1] if
+                                        len(found) == 1 else kind,
+                                        " (stopped at the limit)"
+                                        if len(found) >= int(limit) else "")),
+        ])
+
+    def complete(self, ctx, args):
+        return _names(ctx, args[-1] if args else "")
+
+
+class DisCommand(Command):
+    """`patch dis` — what a class of the client actually does.
+
+    Produced when it is asked for and written into the workspace, because
+    laying out fifty thousand smali files would be hours and gigabytes to
+    answer a question about one method.
+    """
+
+    name = "dis"
+    summary = "disassemble one of the client's classes"
+    usage = "patch dis <class> [--method <name>] [--lines N] [--quiet]"
+
+    def run(self, ctx, args):
+        from ...patch import dex as dex_module
+        from ...patch import hooks as hooks_module
+        from ...patch import smali
+
+        flags = parse_flags(args, {"--method": "str", "-m": "str",
+                                   "--lines": "int", "-n": "int",
+                                   "--quiet": "bool", "-q": "bool"})
+        rest = list(flags.positional)
+        name = _one(ctx, rest)
+        if rest and rest[0] == name:
+            rest.pop(0)
+        if not rest:
+            raise CommandError("patch dis needs a class", hint=self.usage)
+        wanted = rest[0]
+        client = _client_of(ctx, name)
+
+        dex_name = client.where(wanted)
+        if dex_name is None:
+            raise CommandError("no class %s in the client" % wanted,
+                               hint="patch find %s" % wanted.rsplit(".", 1)[-1])
+        one = client.dex(dex_name)
+        readable = dex_module.type_name(dex_module.descriptor_of(wanted))
+        limit = flags.get("--lines") or flags.get("-n")
+
+        chosen = flags.get("--method") or flags.get("-m")
+        if chosen:
+            method = hooks_module.method_of(one, readable, chosen)
+            lines = smali.method_lines(one, method, limit=limit)
+        else:
+            lines = smali.class_lines(one, readable, limit=limit)
+
+        written = self._write(ctx, name, readable, lines)
+        result = []
+        if not (flags.has("--quiet") or flags.has("-q")):
+            result.append(blocks.Text(lines))
+        result.append(blocks.Summary(
+            "%s, from %s — written to %s" % (readable, dex_name, written)))
+        return blocks.Result(result)
+
+    def _write(self, ctx, name, class_name, lines):
+        """Into the workspace, where an editor can reach it."""
+        from ...patch import client as client_module
+
+        work_root, _state = _roots()
+        base = os.path.join(_store().work_dir(work_root, name),
+                            client_module.LISTINGS)
+        path = os.path.join(base, class_name.replace(".", os.sep) + ".smali")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except Exception as e:
+            log.error("patch: cannot write the listing", e)
+            return "nowhere: %s" % e
+        return _guest(ctx, path)
+
+    def complete(self, ctx, args):
+        return _names(ctx, args[-1] if args else "")
+
+
+class HookCommand(Command):
+    """`patch hook` — a skeleton aimed at one method of the client.
+
+    The parameter types are read out of the dex rather than typed by hand,
+    which is the part nobody gets right from memory: a method with three
+    overloads needs the right one named, and `Ljava/lang/CharSequence;` is
+    not something anybody recalls.
+    """
+
+    name = "hook"
+    summary = "start a hook for one of the client's methods"
+    usage = "patch hook <class> <method> [--name <file>] [--force]"
+    mutating = True
+
+    def run(self, ctx, args):
+        from ...patch import dex as dex_module
+        from ...patch import hooks as hooks_module
+
+        flags = parse_flags(args, {"--name": "str", "-n": "str",
+                                   "--force": "bool", "-f": "bool"})
+        rest = list(flags.positional)
+        name = _one(ctx, rest)
+        if rest and rest[0] == name:
+            rest.pop(0)
+        if len(rest) < 2:
+            raise CommandError("patch hook needs a class and a method",
+                               hint=self.usage)
+        wanted, method_name = rest[0], rest[1]
+        client = _client_of(ctx, name)
+        dex_name = client.where(wanted)
+        if dex_name is None:
+            raise CommandError("no class %s in the client" % wanted,
+                               hint="patch find %s" % wanted.rsplit(".", 1)[-1])
+        readable = dex_module.type_name(dex_module.descriptor_of(wanted))
+        one = client.dex(dex_name)
+        method = hooks_module.method_of(one, readable, method_name)
+
+        work_root, _state = _roots()
+        file_name = hooks_module.module_name(
+            flags.get("--name") or flags.get("-n")
+            or "%s_%s" % (readable.rsplit(".", 1)[-1], method_name))
+        path = os.path.join(_store().work_dir(work_root, name), "hooks",
+                            file_name + ".py")
+        if os.path.exists(path) and not (flags.has("--force")
+                                         or flags.has("-f")):
+            raise CommandError("%s.py is already there" % file_name,
+                               hint="--force to overwrite it, or --name for "
+                                    "another")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(hooks_module.skeleton(readable, method,
+                                                   dex_name))
+        except Exception as e:
+            raise CommandError("could not write the hook: %s" % e)
+
+        return blocks.Result([
+            blocks.Fields([("hook", file_name + ".py"),
+                           ("class", readable),
+                           ("method", method.descriptor_signature()),
+                           ("path", _guest(ctx, path))], title="started"),
+            blocks.Summary("edit it, then `patch build --install`",
+                           role=blocks.SUCCESS),
+        ])
+
+    def complete(self, ctx, args):
+        return _names(ctx, args[-1] if args else "")
 
 
 class CodeCommand(Command):
@@ -598,6 +916,9 @@ def build():
         OpenCommand(),
         ListCommand(),
         DiffCommand(),
+        FindCommand(),
+        DisCommand(),
+        HookCommand(),
         CodeCommand(),
         BuildCommand(),
         RevertCommand(),
