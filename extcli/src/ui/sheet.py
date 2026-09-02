@@ -84,15 +84,10 @@ def _detach_on_dismiss(sheet, session):
     and anything still running survive being swiped away.
     """
     try:
-        from android.content import DialogInterface
-        from java import dynamic_proxy
+        from ..compat import proxies
 
-        class _OnDismiss(dynamic_proxy(DialogInterface.OnDismissListener)):
-            def onDismiss(self, dialog):
-                session.detach()
-                return None
-
-        sheet.setOnDismissListener(_OnDismiss())
+        sheet.setOnDismissListener(
+            proxies.dismiss_listener(lambda dialog: session.detach()))
     except Exception as e:
         log.error("sheet: cannot watch for dismissal", e)
 

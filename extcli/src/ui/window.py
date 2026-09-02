@@ -118,8 +118,9 @@ def inset_by_hand(root):
     Letting the decor do it leaves the window ending at the navigation bar, so
     the strip behind the bar belongs to whatever was on screen before.
     """
-    from android.view import View, WindowInsets
-    from java import dynamic_proxy
+    from android.view import WindowInsets
+
+    from ..compat import proxies
 
     def padding_for(insets):
         try:
@@ -133,19 +134,18 @@ def inset_by_hand(root):
                     int(insets.getSystemWindowInsetRight()),
                     int(insets.getSystemWindowInsetBottom()))
 
-    class _Listener(dynamic_proxy(View.OnApplyWindowInsetsListener)):
-        def onApplyWindowInsets(self, view, insets):
-            try:
-                values = padding_for(insets)
-                view.setPadding(*values)
-                # kept for `host check --window`: the numbers the system handed us
-                view.setTag(_TAG, "insets %d,%d,%d,%d" % values)
-            except Exception as e:
-                log.error("window: cannot apply insets", e)
-            return insets
+    def applied(view, insets):
+        try:
+            values = padding_for(insets)
+            view.setPadding(*values)
+            # kept for `host check --window`: the numbers the system handed us
+            view.setTag(_TAG, "insets %d,%d,%d,%d" % values)
+        except Exception as e:
+            log.error("window: cannot apply insets", e)
+        return insets
 
     try:
-        root.setOnApplyWindowInsetsListener(_Listener())
+        root.setOnApplyWindowInsetsListener(proxies.insets_listener(applied))
         root.setFitsSystemWindows(False)
     except Exception as e:
         log.error("window: cannot watch the insets", e)

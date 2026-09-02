@@ -305,19 +305,15 @@ class _Centre(object):
         if self.view is None:
             return
         try:
-            from android.view import View
-            from java import dynamic_proxy
+            from ..compat import proxies
 
-            outer = self
+            def moved(view, left, top, right, bottom,
+                      old_left, old_top, old_right, old_bottom):
+                if right - left != old_right - old_left or left != old_left:
+                    self._go(True)
 
-            class _Moved(dynamic_proxy(View.OnLayoutChangeListener)):
-                def onLayoutChange(self, view, left, top, right, bottom,
-                                   old_left, old_top, old_right, old_bottom):
-                    if right - left != old_right - old_left or \
-                            left != old_left:
-                        outer._go(True)
-
-            self.view.addOnLayoutChangeListener(_Moved())
+            self.view.addOnLayoutChangeListener(
+                proxies.layout_listener(moved))
         except Exception as e:
             log.error("tools: cannot watch the button's row", e)
 
@@ -389,46 +385,37 @@ def _fit(scroll, body, maximum):
     buttons off the screen. So the height is measured every frame: it follows
     the contents while a group opens, and stops at `maximum`.
     """
-    from android.view import ViewTreeObserver
-    from java import dynamic_proxy
+    from ..compat import proxies
 
-    class _Fit(dynamic_proxy(ViewTreeObserver.OnPreDrawListener)):
-        first = True
+    first = [True]
 
-        def onPreDraw(self):
-            try:
-                wanted = min(body.getMeasuredHeight(), maximum)
-                params = scroll.getLayoutParams()
-                if wanted > 0 and params.height != wanted:
-                    params.height = wanted
-                    scroll.setLayoutParams(params)
-                    if self.first:
-                        # the very first pass: skip the frame rather than show
-                        # one at the wrong height
-                        self.first = False
-                        return False
-            except Exception:
-                pass
-            return True
+    def measure():
+        try:
+            wanted = min(body.getMeasuredHeight(), maximum)
+            params = scroll.getLayoutParams()
+            if wanted > 0 and params.height != wanted:
+                params.height = wanted
+                scroll.setLayoutParams(params)
+                if first[0]:
+                    # the very first pass: skip the frame rather than show one
+                    # at the wrong height
+                    first[0] = False
+                    return False
+        except Exception:
+            pass
+        return True
 
     try:
-        scroll.getViewTreeObserver().addOnPreDrawListener(_Fit())
+        scroll.getViewTreeObserver().addOnPreDrawListener(
+            proxies.pre_draw_listener(measure))
     except Exception as e:
         log.error("tools: the list cannot size itself", e)
 
 
 def _runnable(function):
-    from java import dynamic_proxy
-    from java.lang import Runnable
+    from ..compat import proxies
 
-    class _Run(dynamic_proxy(Runnable)):
-        def run(self):
-            try:
-                function()
-            except Exception:
-                pass
-
-    return _Run()
+    return proxies.runnable(function)
 
 
 class _GroupRow(object):
@@ -866,17 +853,9 @@ def _force(spring_force, stiffness, damping):
 
 def _update(function):
     """An OnAnimationUpdateListener that calls a Python function."""
-    from androidx.dynamicanimation.animation import DynamicAnimation
-    from java import dynamic_proxy
+    from ..compat import proxies
 
-    class _Listener(dynamic_proxy(DynamicAnimation.OnAnimationUpdateListener)):
-        def onAnimationUpdate(self, animation, value, velocity):
-            try:
-                function(value)
-            except Exception:
-                pass
-
-    return _Listener()
+    return proxies.animation_listener(function)
 
 
 def _arrow(activity, colour):

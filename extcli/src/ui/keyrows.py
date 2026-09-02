@@ -587,28 +587,27 @@ def _block(colours, position, count):
 
 def _fit(scroll, body, maximum):
     """Makes the list as tall as its contents, and no taller."""
-    from android.view import ViewTreeObserver
-    from java import dynamic_proxy
+    from ..compat import proxies
 
-    class _Fit(dynamic_proxy(ViewTreeObserver.OnPreDrawListener)):
-        first = True
+    first = [True]
 
-        def onPreDraw(self):
-            try:
-                wanted = min(body.getMeasuredHeight(), maximum)
-                params = scroll.getLayoutParams()
-                if wanted > 0 and params.height != wanted:
-                    params.height = wanted
-                    scroll.setLayoutParams(params)
-                    if self.first:
-                        self.first = False
-                        return False
-            except Exception:
-                pass
-            return True
+    def measure():
+        try:
+            wanted = min(body.getMeasuredHeight(), maximum)
+            params = scroll.getLayoutParams()
+            if wanted > 0 and params.height != wanted:
+                params.height = wanted
+                scroll.setLayoutParams(params)
+                if first[0]:
+                    first[0] = False
+                    return False
+        except Exception:
+            pass
+        return True
 
     try:
-        scroll.getViewTreeObserver().addOnPreDrawListener(_Fit())
+        scroll.getViewTreeObserver().addOnPreDrawListener(
+            proxies.pre_draw_listener(measure))
     except Exception as e:
         log.error("keyrows: the list cannot size itself", e)
 

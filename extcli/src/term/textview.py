@@ -184,17 +184,15 @@ def _signed(color):
 
 
 def _runnable(function):
-    from java import dynamic_proxy
-    from java.lang import Runnable
+    """A Runnable, from the one class there is.
 
-    class _Run(dynamic_proxy(Runnable)):
-        def run(self):
-            try:
-                function()
-            except Exception as e:
-                log.error("term: scheduled work failed", e)
+    Not a class defined here: this is posted on every frame of output, and a
+    proxy class per call is what made the redraw timer die inside
+    `Handler.handleCallback` with an AttributeError about `_chaquopyGetDict`.
+    """
+    from ..compat import proxies
 
-    return _Run()
+    return proxies.runnable(function)
 
 
 class TextViewTerminal(object):
@@ -515,27 +513,21 @@ class TextViewTerminal(object):
         drawing a screen has to be told: it measured itself once, when it
         started, and nothing since has said otherwise.
         """
-        from android.view import View
-        from java import dynamic_proxy
+        from ..compat import proxies
 
         last = {"size": None}
         terminal = self
 
-        class _Listener(dynamic_proxy(View.OnLayoutChangeListener)):
-            def onLayoutChange(self, view, left, top, right, bottom,
-                               old_left, old_top, old_right, old_bottom):
-                try:
-                    cols, rows = terminal.metrics()[:2]
-                    if not cols or not rows or (cols, rows) == last["size"]:
-                        return None
-                    last["size"] = (cols, rows)
-                    callback(int(cols), int(rows))
-                except Exception as e:
-                    log.error("term: size watcher failed", e)
-                return None
+        def moved(view, left, top, right, bottom,
+                  old_left, old_top, old_right, old_bottom):
+            cols, rows = terminal.metrics()[:2]
+            if not cols or not rows or (cols, rows) == last["size"]:
+                return
+            last["size"] = (cols, rows)
+            callback(int(cols), int(rows))
 
         try:
-            listener = _Listener()
+            listener = proxies.layout_listener(moved)
             self._scroll.addOnLayoutChangeListener(listener)
             self._text_view.addOnLayoutChangeListener(listener)
         except Exception as e:
@@ -548,19 +540,11 @@ class TextViewTerminal(object):
         uses this to hand focus back to its input, so typing survives a tap and
         every redraw.
         """
-        from android.view import View
-        from java import dynamic_proxy
-
-        class _Listener(dynamic_proxy(View.OnFocusChangeListener)):
-            def onFocusChange(self, view, has_focus):
-                try:
-                    callback(bool(has_focus))
-                except Exception as e:
-                    log.error("term: focus watcher failed", e)
-                return None
+        from ..compat import proxies
 
         try:
-            self._text_view.setOnFocusChangeListener(_Listener())
+            self._text_view.setOnFocusChangeListener(
+                proxies.focus_listener(callback))
         except Exception as e:
             log.error("term: cannot watch focus", e)
 
@@ -571,32 +555,17 @@ class TextViewTerminal(object):
         take focus back and does not redraw the input line, so the highlight
         survives whatever is being typed or printed.
         """
-        from android.view import ActionMode
-        from java import dynamic_proxy
+        from ..compat import proxies
 
         text_view = self._text_view
 
-        class _Callback(dynamic_proxy(ActionMode.Callback)):
-            def onCreateActionMode(self, mode, menu):
-                try:
-                    on_start()
-                except Exception as e:
-                    log.error("term: selection start failed", e)
-                return True
-
-            def onPrepareActionMode(self, mode, menu):
-                return False
-
-            def onActionItemClicked(self, mode, item):
-                return False
-
-            def onDestroyActionMode(self, mode):
-                # posted: this runs mid-teardown, and the callback moves focus
-                text_view.post(_Runnable(on_end))
-                return None
+        def ended():
+            # posted: this runs mid-teardown, and the callback moves focus
+            text_view.post(proxies.runnable(on_end))
 
         try:
-            text_view.setCustomSelectionActionModeCallback(_Callback())
+            text_view.setCustomSelectionActionModeCallback(
+                proxies.selection_callback(on_start, ended))
         except Exception as e:
             log.error("term: cannot watch the selection toolbar", e)
 
@@ -849,23 +818,8 @@ class TextViewTerminal(object):
             log.log("term: cannot draw the cursor: %s" % e, debug=True)
 
 
-class _Runnable(object):
-    """Chaquopy needs a Java Runnable for View.post; built lazily to keep this
-    module importable without a client."""
+def _Runnable(function):
+    """Kept as a name because callers read as if they were constructing one."""
+    from ..compat import proxies
 
-    def __new__(cls, function):
-        from java import dynamic_proxy
-        from java.lang import Runnable
-
-        class _Impl(dynamic_proxy(Runnable)):
-            def __init__(self, fn):
-                super().__init__()
-                self._fn = fn
-
-            def run(self):
-                try:
-                    self._fn()
-                except Exception:
-                    pass
-
-        return _Impl(function)
+    return proxies.runnable(function)

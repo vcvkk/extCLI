@@ -74,17 +74,9 @@ def open_screen(plugin, initial_command=None):
 def _detach_on_dismiss(dialog, session):
     """Back takes the screen down and leaves the session running."""
     try:
-        from android.content import DialogInterface
-        from java import dynamic_proxy
+        from ..compat import proxies
 
-        class _OnDismiss(dynamic_proxy(DialogInterface.OnDismissListener)):
-            def onDismiss(self, dismissed):
-                try:
-                    session.detach()
-                except Exception as e:
-                    log.error("screen: detach failed", e)
-                return None
-
-        dialog.setOnDismissListener(_OnDismiss())
+        dialog.setOnDismissListener(
+            proxies.dismiss_listener(lambda dismissed: session.detach()))
     except Exception as e:
         log.error("screen: cannot watch for dismissal", e)

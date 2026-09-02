@@ -203,8 +203,7 @@ def _hold(key, action, session):
     has to do what the click did — the first press acts at once — and it means
     the key draws itself as pressed by hand.
     """
-    from android.view import View
-    from java import dynamic_proxy
+    from ..compat import proxies
 
     held = {"on": False}
 
@@ -226,31 +225,30 @@ def _hold(key, action, session):
         except Exception:
             pass
 
-    class _Touch(dynamic_proxy(View.OnTouchListener)):
-        def onTouch(self, view, event):
-            try:
-                kind = int(event.getActionMasked())
-                if kind == 0:                      # ACTION_DOWN
-                    held["on"] = True
-                    view.setPressed(True)
-                    session.on_softkey(action)
-                    view.postDelayed(_runnable(again), FIRST_REPEAT)
-                    return True
-                if kind == 2:                      # ACTION_MOVE
-                    # a finger that has slid off the key is no longer on it
-                    if held["on"] and not _inside(view, event):
-                        stop(view)
-                    return True
-                if kind in (1, 3):                 # ACTION_UP, ACTION_CANCEL
+    def touched(view, event):
+        try:
+            kind = int(event.getActionMasked())
+            if kind == 0:                      # ACTION_DOWN
+                held["on"] = True
+                view.setPressed(True)
+                session.on_softkey(action)
+                view.postDelayed(_runnable(again), FIRST_REPEAT)
+                return True
+            if kind == 2:                      # ACTION_MOVE
+                # a finger that has slid off the key is no longer on it
+                if held["on"] and not _inside(view, event):
                     stop(view)
-                    return True
-            except Exception as e:
-                log.error("softkeys: holding %s failed" % action, e)
-                held["on"] = False
-            return False
+                return True
+            if kind in (1, 3):                 # ACTION_UP, ACTION_CANCEL
+                stop(view)
+                return True
+        except Exception as e:
+            log.error("softkeys: holding %s failed" % action, e)
+            held["on"] = False
+        return False
 
     try:
-        key.setOnTouchListener(_Touch())
+        key.setOnTouchListener(proxies.touch_listener(touched))
     except Exception as e:
         log.error("softkeys: cannot hold %s" % action, e)
 
@@ -261,17 +259,14 @@ def _inside(view, event):
 
 
 def _runnable(function):
-    from java import dynamic_proxy
-    from java.lang import Runnable
+    """A Runnable for the repeat timer.
 
-    class _Run(dynamic_proxy(Runnable)):
-        def run(self):
-            try:
-                function()
-            except Exception as e:
-                log.error("softkeys: repeat failed", e)
+    This is posted again on every tick of a held key, so a class defined here
+    would have been dozens of them for one long press.
+    """
+    from ..compat import proxies
 
-    return _Run()
+    return proxies.runnable(function)
 
 
 def _handler(action, session):

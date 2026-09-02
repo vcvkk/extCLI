@@ -32,7 +32,7 @@ from ..shell.context import Context
 from ..shell.env import Env
 from ..term import bridge, textview
 from ..utils import log
-from . import dialogs, prefs, softkeys
+from . import prefs, softkeys
 
 HISTORY_LIMIT = 200
 HISTORY_FILE = "history"
@@ -1475,12 +1475,12 @@ def build_view(session):
     """
     from android.text import InputType
     from android.util import TypedValue
-    from android.view import View
     from android.view.inputmethod import EditorInfo
     from android.widget import EditText, FrameLayout, LinearLayout, TextView
     from android_utils import OnClickListener
-    from java import dynamic_proxy
     from org.telegram.messenger import AndroidUtilities
+
+    from ..compat import proxies
 
     activity = session.activity
     palette = session.palette
@@ -1549,64 +1549,11 @@ def build_view(session):
             field.setTypeface(typeface)
     session.input_view = field
 
-    class _Watcher(dynamic_proxy(_text_watcher_class())):
-        def beforeTextChanged(self, text, start, count, after):
-            return None
-
-        def onTextChanged(self, text, start, before, count):
-            try:
-                session.on_input_changed(str(text))
-            except Exception as e:
-                log.error("console: input update failed", e)
-
-        def afterTextChanged(self, editable):
-            return None
-
-    field.addTextChangedListener(_Watcher())
-
-    class _EditorAction(dynamic_proxy(TextView.OnEditorActionListener)):
-        def onEditorAction(self, view, action_id, event):
-            try:
-                session.submit(str(view.getText()))
-            except Exception as e:
-                log.error("console: submit failed", e)
-            return True
-
-    field.setOnEditorActionListener(_EditorAction())
-
-    class _Keys(dynamic_proxy(View.OnKeyListener)):
-        """Keys the field would otherwise swallow, while a program owns them.
-
-        Backspace is the one that matters: in raw mode the field is emptied
-        after every keystroke, so there is never anything in it to delete and
-        no text change is reported — the key event is the only sign it was
-        pressed. The rest are here for a real keyboard: arrows, escape and tab
-        never reach a text watcher either.
-        """
-
-        KEYS = {
-            67: "\x7f",        # DEL
-            66: "\r",          # ENTER
-            61: "\t",          # TAB
-            111: "\x1b",       # ESCAPE
-            19: "\x1b[A", 20: "\x1b[B", 22: "\x1b[C", 21: "\x1b[D",
-        }
-
-        def onKey(self, view, code, event):
-            try:
-                if event is not None and event.getAction() != 0:  # ACTION_DOWN
-                    return False
-                if session._program_channel() is None:
-                    return False
-                sequence = self.KEYS.get(int(code))
-                if sequence is None:
-                    return False
-                return bool(session.type_raw(sequence))
-            except Exception as e:
-                log.error("console: key %s failed" % code, e)
-                return False
-
-    field.setOnKeyListener(_Keys())
+    field.addTextChangedListener(
+        proxies.text_watcher(session.on_input_changed))
+    field.setOnEditorActionListener(proxies.editor_action_listener(
+        lambda view: session.submit(str(view.getText()))))
+    field.setOnKeyListener(proxies.key_listener(_raw_key(session)))
     column.addView(field, LinearLayout.LayoutParams(-1, dp(1) if echoes else -2))
 
     # a half-typed line survives a trip out of the console
@@ -1663,27 +1610,43 @@ def build_view(session):
     return root
 
 
-def _text_watcher_class():
-    from android.text import TextWatcher
+# Keys the input field would otherwise swallow while a program owns them.
+# Backspace is the one that matters: in raw mode the field is emptied after
+# every keystroke, so there is never anything in it to delete and no text
+# change is reported — the key event is the only sign it was pressed. The rest
+# are here for a real keyboard: arrows, escape and tab never reach a text
+# watcher either.
+RAW_CODES = {
+    67: "\x7f",        # DEL
+    66: "\r",          # ENTER
+    61: "\t",          # TAB
+    111: "\x1b",       # ESCAPE
+    19: "\x1b[A", 20: "\x1b[B", 22: "\x1b[C", 21: "\x1b[D",
+}
 
-    return TextWatcher
+
+def _raw_key(session):
+    """Sends a key straight to a running program, or lets the field have it."""
+
+    def pressed(code, event):
+        if event is not None and event.getAction() != 0:   # ACTION_DOWN
+            return False
+        if session._program_channel() is None:
+            return False
+        sequence = RAW_CODES.get(code)
+        if sequence is None:
+            return False
+        return bool(session.type_raw(sequence))
+
+    return pressed
 
 
 def _long_press_listener(function):
-    from android.view import View
-    from java import dynamic_proxy
+    # False lets the press fall through to the view's own handler, which is
+    # how the system's text selection ever gets to run
+    from ..compat import proxies
 
-    class _Impl(dynamic_proxy(View.OnLongClickListener)):
-        def onLongClick(self, view):
-            # False lets the press fall through to the view's own handler,
-            # which is how the system's text selection ever gets to run
-            try:
-                return bool(function())
-            except Exception as e:
-                log.error("console: long press failed", e)
-                return True
-
-    return _Impl()
+    return proxies.long_click_listener(lambda view: function())
 
 
 def after_layout(session, initial_command):

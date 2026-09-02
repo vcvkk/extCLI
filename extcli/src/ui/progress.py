@@ -440,17 +440,9 @@ class SetupBulletin(object):
 
 
 def _runnable(function):
-    from java import dynamic_proxy
-    from java.lang import Runnable
+    from ..compat import proxies
 
-    class _Run(dynamic_proxy(Runnable)):
-        def run(self):
-            try:
-                function()
-            except Exception as e:
-                log.error("progress: runnable failed", e)
-
-    return _Run()
+    return proxies.runnable(function)
 
 
 def _visible_bulletin():
