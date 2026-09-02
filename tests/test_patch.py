@@ -257,6 +257,24 @@ def test_the_version_says_it_is_off_to_one_side():
     assert pack.version_of({}, "62Yg28") == "0+patch.62Yg28"
 
 
+def test_a_hash_of_source_that_is_no_longer_the_source_is_dropped(tmp_path):
+    """It is the one field somebody would check to decide a file had not been
+    tampered with, and kept it would agree while being wrong."""
+    from extcli_src.compat import plugins
+
+    root = plugin_tree(tmp_path / "b")
+    _write(os.path.join(root, "plug", "meta.yml"),
+           META + "sourceHash: abc123\nbuildNum: 6\nbuildDate: 2020-01-01\n")
+    target = str(tmp_path / "out.eaf")
+    assert pack.build(root, target, "62Yg28", workspace.Changes(),
+                      when=1_700_000_000)[0]
+
+    data = plugins.read_archive(target)
+    assert "sourceHash" not in data and "buildNum" not in data
+    # the archive really was built, today, here
+    assert data["buildDate"] != "2020-01-01"
+
+
 def test_only_four_things_about_the_plugin_change(tmp_path):
     _relative, data = pack.metadata(plugin_tree(tmp_path / "a"))
     named = pack.fields(data, "62Yg28", workspace.Changes())

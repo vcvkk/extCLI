@@ -31,10 +31,19 @@ REFMAP = "refmap.yml"
 # who has only the file.
 REPORT_NAME = "PATCH.md"
 
-# The keys a patch build replaces, and nothing else. Everything the plugin
-# said about itself — its author, the client versions it needs, the SDK it was
-# written against — is still true of the patched copy.
+# The keys a patch build replaces. Everything else the plugin said about
+# itself — its author, the client versions it needs, the SDK it was written
+# against — is still true of the patched copy.
 OWNED = ("id", "name", "version", "description")
+
+# Keys that were true of the tree the plugin was built from and are not true
+# of this one. A hash of source that is no longer the source in the archive is
+# worse than no hash: it is the one field somebody would check to decide the
+# file had not been tampered with, and here it would agree while being wrong.
+STALE = ("sourceHash", "buildNum")
+
+# Rewritten rather than dropped: the archive really was built, today, here.
+DATE = "buildDate"
 
 
 def metadata(path):
@@ -128,7 +137,11 @@ def build(work, target, mark, changes, source=None, when=None):
 
     named = dict(data)
     named.update(fields(data, mark, changes, source=source))
-    text = render(named, order=OWNED + tuple(sorted(data)))
+    for key in STALE:
+        named.pop(key, None)
+    if DATE in named:
+        named[DATE] = _today(when)
+    text = render(named, order=OWNED + tuple(sorted(named)))
     source_name = source or data.get("name") or data.get("id")
 
     try:
@@ -149,6 +162,12 @@ def build(work, target, mark, changes, source=None, when=None):
             pass
         return False, "%s: %s" % (type(e).__name__, e)
     return True, named["name"]
+
+
+def _today(when=None):
+    import time
+
+    return time.strftime("%Y-%m-%d", time.localtime(when or time.time()))
 
 
 def unpack(archive, target):
