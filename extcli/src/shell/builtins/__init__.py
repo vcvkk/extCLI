@@ -7,6 +7,7 @@ from . import config as config_cmd
 from . import help as help_cmd
 from . import host as host_cmd
 from . import log as log_cmd
+from . import patch as patch_cmd
 from . import plugin as plugin_cmd
 from . import rootfs as rootfs_cmd
 from . import session as session_cmd
@@ -22,6 +23,7 @@ def build_registry():
     registry.register(plugin_cmd.build(), aliases=("plugins",))
     registry.register(log_cmd.build())
     registry.register(tg_cmd.build())
+    registry.register(patch_cmd.build())
     registry.register(rootfs_cmd.build())
     for command in session_cmd.build_all():
         registry.register(command)

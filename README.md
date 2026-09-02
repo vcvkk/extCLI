@@ -18,8 +18,16 @@ Status: early development.
   where the system shell is unavailable.
 - Client commands: `plugin` (list/info/install/enable/disable/reload/path/config),
   `host` (status/paths/check/backends/version/class), `tg` (send/read/get/chats/id),
-  `config`, `log`.
+  `patch` (open/list/diff/code/build/revert/drop), `config`, `log`.
+- `patch`: unpack an installed plugin into a workspace under `/patch`, edit it
+  with anything in the container, and build the changes into a *new* plugin —
+  `extCLI patch-62Yg28`, carrying a summary of what moved. The original stays
+  installed, so turning the patch off puts the phone back. For plugins that
+  shipped compiled, `patch code` disassembles a `.pyc` and can swap a constant
+  exactly, leaving every instruction and line number where it was.
 - Colors taken from your Telegram theme, plus an Amoled theme.
+- The extra key rows under the terminal can be rearranged in the settings, on
+  a live preview drawn by the same code that draws the real ones.
 
 ## Requirements
 
