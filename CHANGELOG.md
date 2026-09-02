@@ -33,15 +33,34 @@ end the options.
 
 ### New
 
-- **`patch`** — unpack an installed plugin into a workspace under `/patch`,
-  edit it with anything in the container, and build the change into a *new*
-  plugin called `extCLI patch-62Yg28`, with a summary of what moved in its
-  description and the full report inside the archive. The original stays
-  installed, so turning the patch off puts the phone back.
-  `patch code` handles the plugins that shipped compiled: it disassembles a
-  `.pyc`, lists every string and name in it, and can swap a constant exactly,
-  leaving every instruction and line number where it was. It does not pretend
-  to decompile — Python 3.11 has no working decompiler.
+- **`patch`**, which patches two different things under one word.
+
+  *A plugin.* `patch open <id>` unpacks it under `/patch`; edit it with
+  anything in the container and `patch build` makes a new plugin called
+  `extCLI patch-62Yg28`, with a summary of what moved in its description and
+  the full report inside the archive. `patch code` handles the plugins that
+  shipped compiled: it disassembles a `.pyc`, lists every string and name in
+  it, and can swap a constant exactly, leaving every instruction and line
+  number where it was. It does not pretend to decompile — Python 3.11 has no
+  working decompiler.
+
+  *The client.* `patch open client` indexes exteraGram's fifty thousand
+  classes out of its own APK — read where it sits, one dex at a time, not
+  copied in. `patch find` searches classes, methods and string constants,
+  `patch dis` writes the smali for a class into the workspace, and
+  `patch hook <class> <method>` starts a hook with the parameter types read
+  out of the dex. `patch build` turns the hooks into a plugin that applies
+  them as it loads.
+
+  The APK is never rewritten and the original plugin is never overwritten. A
+  patch is always a separate plugin, so turning it off puts the phone back —
+  which is the whole reason for doing it this way. Repacking the APK would
+  mean a client that has to be reinstalled, loses its data directory and stops
+  updating.
+
+  The dex parser and disassembler are checked against the real client: 54,584
+  classes from seven dex files, 301,536 methods, 5,448,485 instructions, 217
+  distinct opcodes, no desynchronisation and no unknown opcode.
 - **`plugin install <file.eaf>`** — the last step of writing a plugin on the
   phone. The archive is read and checked here before the client is handed
   anything, and an install over a plugin already there is refused unless
@@ -73,4 +92,4 @@ end the options.
   lists of the mounts had drifted apart.
 - The plugin-install method is taken from the client rather than guessed.
 
-828 tests pass.
+905 tests pass.
