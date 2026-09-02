@@ -387,7 +387,10 @@ def build(plugin):
     Switch = _items("Switch")
     Text = _items("Text")
 
-    version = host.plugin_version() or "0.1.0"
+    # from meta.yml, which is the one place the version is written down. A
+    # number hardcoded here as a fallback would be wrong the first time the
+    # version moved and would go on being wrong quietly.
+    version = host.plugin_version()
 
     return [
         Header(text=_s("settings_header", "extCLI")),
@@ -495,7 +498,8 @@ def build(plugin):
               _s("advanced_item_desc",
                  "Entry points, the terminal renderer, logging"),
               "msg_settings", _advanced_items),
-        Divider(text="extCLI v%s · %s" % (version, prefs.style_name())),
+        Divider(text="extCLI%s · %s" % (" v%s" % version if version else "",
+                                        prefs.style_name())),
     ]
 
 
