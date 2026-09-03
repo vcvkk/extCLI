@@ -261,7 +261,16 @@ def _syscalls(res_dir, state_dir, abi, linker, run, say=None):
         return False, "no dynamic linker on this device"
     tool = native.tool(res_dir, abi, native.SYSCALL_MAP)
     if not tool or not os.path.isfile(tool):
-        return False, "not built for %s" % (abi or "this device")
+        # say which of the two it is: an ABI we do not ship a binary for, or a
+        # res/ directory the client did not put where we looked. The second was
+        # a real bug — the client serves assets through the SDK rather than
+        # unpacking them next to the code — and "not built for arm64-v8a" sent
+        # everyone looking in the wrong direction.
+        base = native.directory(res_dir, abi)
+        if os.path.isdir(base):
+            return False, "no syscall map built for %s" % (abi or "this device")
+        return False, ("cannot find the bundled binaries (looked in %s)"
+                       % base)
     # the tool prints the refused numbers in order, so the last one printed
     # says roughly how far through the table it is — the only progress a scan
     # of one child process per number can report without being asked

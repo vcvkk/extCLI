@@ -213,44 +213,187 @@ def _root_candidates():
     return seen
 
 
-def plugin_root():
-    """Directory the plugin was installed into (contains src/, res/, dex/).
+def _looks_like_root(path):
+    """Is this the directory the plugin was installed into?
 
-    Verified by looking for meta.yml rather than trusted blindly: an unverified
-    guess here would send the dex loader and the locale reader to a directory
-    that does not exist, and they would report "missing" instead of "wrong path".
+    meta.yml is the nicest marker but not a reliable one: this client extracts
+    only the Python it needs to import and serves everything else through the
+    SDK's asset API, so on device there is no meta.yml, no res/ and no dex/
+    next to src/ — only src/ itself. The one thing always on disk is the code
+    we are running from, so that is what the root is verified by. meta.yml,
+    where a build or another client does leave it, is still preferred.
+    """
+    try:
+        if os.path.isfile(os.path.join(path, _MARKER)):
+            return True
+        # the very file this function lives in, found under the candidate
+        return os.path.isfile(os.path.join(path, "src", "compat", "paths.py"))
+    except Exception:
+        return False
+
+
+def plugin_root():
+    """Directory the plugin was installed into (contains at least src/).
+
+    Verified rather than trusted: an unverified guess would send the dex loader
+    and the locale reader to a directory that does not exist, and they would
+    report "missing" instead of "wrong path". A candidate carrying meta.yml
+    wins over one recognised only by its src/ tree, so a layout that does have
+    the metadata still resolves to it.
     """
     global _plugin_root
     if _plugin_root is not None:
         return _plugin_root
 
     candidates = _root_candidates()
-    for path in candidates:
-        try:
-            if os.path.isfile(os.path.join(path, _MARKER)):
-                _plugin_root = path
-                return path
-        except Exception:
-            continue
+    # meta.yml first, then the structural match, so nothing regresses on a
+    # client that does lay the whole archive out
+    for wants_meta in (True, False):
+        for path in candidates:
+            try:
+                has_meta = os.path.isfile(os.path.join(path, _MARKER))
+                if wants_meta and not has_meta:
+                    continue
+                if wants_meta or _looks_like_root(path):
+                    _plugin_root = path
+                    return path
+            except Exception:
+                continue
 
     # nothing verified: keep the best guess so callers get a usable path, but
     # do not cache it — the client may still be unpacking the archive
     from ..utils import log
 
     tried = ", ".join(candidates[:4]) if candidates else "no candidates"
-    log.error("paths: cannot locate the plugin root (no %s found); tried %s"
-              % (_MARKER, tried), trace=False)
+    log.error("paths: cannot locate the plugin root; tried %s" % tried,
+              trace=False)
     return candidates[0] if candidates else files_dir()
 
 
 def reset_plugin_root():
-    """Forgets the resolved root; used by tests and after a reinstall."""
+    """Forgets the resolved root; used by tests and after a reinstall.
+
+    The assets directory is found relative to the root, so it is forgotten too
+    — otherwise a reinstall that moved the plugin would keep reading the old
+    place.
+    """
     global _plugin_root
     _plugin_root = None
+    reset_res_dir()
+
+
+_res_dir = None
+
+# A file that is in res/ and nowhere else, used to find where the client put
+# the assets. Two deep, so the directory two levels above it is res/ itself.
+_RES_ANCHOR = "config/fastfetch.jsonc"
+
+
+def _has_assets(directory):
+    """Does this directory actually hold what res/ is supposed to?"""
+    try:
+        return (os.path.isdir(os.path.join(directory, "native"))
+                or os.path.isfile(os.path.join(directory, _RES_ANCHOR))
+                or os.path.isdir(os.path.join(directory, "rootfs")))
+    except Exception:
+        return False
 
 
 def res_dir():
-    return os.path.join(plugin_root(), "res")
+    """Where the bundled assets are — native binaries, the rootfs tarball, the
+    dex renderer's data.
+
+    Usually `plugin_root()/res`. But this client does not extract the archive
+    whole: it lays out only the Python it imports and serves everything else
+    through the SDK's asset API, so res/ is not next to src/ and the syscall
+    map, the loader and Alpine all read as "not built". When the obvious place
+    is empty the SDK is asked where the assets really are, by resolving one
+    known file to its real path on disk and climbing back to the assets root.
+    """
+    global _res_dir
+    if _res_dir is not None:
+        return _res_dir
+
+    guess = os.path.join(plugin_root(), "res")
+    if _has_assets(guess):
+        _res_dir = guess
+        return guess
+
+    found = _res_via_sdk()
+    if found and _has_assets(found):
+        _res_dir = found
+        from ..utils import log
+
+        log.log("paths: assets resolved through the SDK to %s" % found,
+                debug=True)
+        return found
+
+    # not found and not cached: the client may still be materialising assets,
+    # so a later call gets to try again rather than being stuck with the guess
+    return guess
+
+
+def reset_res_dir():
+    global _res_dir
+    _res_dir = None
+
+
+def _res_via_sdk():
+    """The assets directory as the SDK knows it, or None.
+
+    The asset facade is rooted at what refmap calls `assets` (our res/), so a
+    file resolved through it sits at `<res>/<relative path>`. Stripping the
+    relative path off the real path it returns leaves `<res>`.
+    """
+    path = _asset_file(_RES_ANCHOR)
+    if not path:
+        return None
+    path = real(path)
+    suffix = _RES_ANCHOR.replace("/", os.sep)
+    if path.endswith(suffix):
+        return path[: -len(suffix)].rstrip(os.sep)
+    # the SDK handed back something shaped differently; its own parent chain
+    # is the next best guess at the assets root
+    return os.path.dirname(os.path.dirname(path))
+
+
+def _asset_file(rel):
+    """The real on-disk path of a bundled asset, however the SDK exposes it."""
+    for resolve in (_asset_via_facade, _asset_via_class):
+        try:
+            path = resolve(rel)
+        except Exception:
+            path = None
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def _asset_via_facade(rel):
+    from elyx import assets
+
+    return _asset_path(assets.get(rel))
+
+
+def _asset_via_class(rel):
+    from elyxcore.assets import Asset
+
+    return _asset_path(Asset.from_path(rel))
+
+
+def _asset_path(asset):
+    """A str path out of an Asset, whether java_file is a property or a call."""
+    if asset is None:
+        return None
+    java_file = getattr(asset, "java_file", None)
+    if callable(java_file):
+        java_file = java_file()
+    if java_file is None:
+        return None
+    try:
+        return str(java_file.getAbsolutePath())
+    except Exception:
+        return str(java_file)
 
 
 def dex_dir():

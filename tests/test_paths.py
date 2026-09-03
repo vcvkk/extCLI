@@ -107,3 +107,97 @@ def test_candidates_include_the_installed_layouts(monkeypatch):
     # the layout a real install uses: files/plugins/ElyxPlugins/<id>/<dir>
     assert os.path.join("plugins", "ElyxPlugins", "extcli", "extcli") in joined
     assert os.path.join("plugins", "extcli", "extcli") in joined
+
+
+# ------------------------------------------ the root when only src/ is on disk
+
+def _fake_install(tmp_path, with_meta=False, with_res=False):
+    """A directory shaped like this client's install: src/ present, and the
+    rest (meta.yml, res/) only if the caller asks."""
+    root = tmp_path / "source" / "extcli" / "extcli"
+    (root / "src" / "compat").mkdir(parents=True)
+    (root / "src" / "compat" / "paths.py").write_text("# me\n")
+    if with_meta:
+        (root / "meta.yml").write_text("id: extcli\n")
+    if with_res:
+        (root / "res" / "native" / "arm64-v8a").mkdir(parents=True)
+    return str(root)
+
+
+def test_the_root_is_found_by_its_src_tree_when_meta_is_absent(tmp_path,
+                                                               monkeypatch):
+    """This client extracts only the Python it imports — no meta.yml next to
+    it — so the running source tree is what the root is verified by."""
+    root = _fake_install(tmp_path, with_meta=False)
+    monkeypatch.setattr(paths, "_root_candidates", lambda: [root])
+    paths.reset_plugin_root()
+    assert paths.plugin_root() == root
+    # verified, so it is cached
+    assert paths._plugin_root == root
+
+
+def test_meta_yml_still_wins_when_two_candidates_match(tmp_path, monkeypatch):
+    """A candidate carrying the metadata is preferred over one known only by
+    its src/, so a client that does lay the archive out resolves to it."""
+    src_only = _fake_install(tmp_path, with_meta=False)
+    full = _fake_install(tmp_path / "other", with_meta=True)
+    monkeypatch.setattr(paths, "_root_candidates", lambda: [src_only, full])
+    paths.reset_plugin_root()
+    assert paths.plugin_root() == full
+
+
+# ---------------------------------------------------- res/ served by the SDK
+
+def test_res_is_the_obvious_place_when_the_assets_are_there(tmp_path,
+                                                            monkeypatch):
+    root = _fake_install(tmp_path, with_res=True)
+    monkeypatch.setattr(paths, "_root_candidates", lambda: [root])
+    paths.reset_plugin_root()
+    assert paths.res_dir() == os.path.join(root, "res")
+
+
+def test_res_is_resolved_through_the_sdk_when_the_obvious_place_is_empty(
+        tmp_path, monkeypatch):
+    """The real device case: src/ is on disk but res/ is not next to it. The
+    SDK is asked, and answers with a file whose path we climb back from."""
+    root = _fake_install(tmp_path, with_res=False)
+    monkeypatch.setattr(paths, "_root_candidates", lambda: [root])
+    paths.reset_plugin_root()
+
+    # where the client actually put the assets, nothing like plugin_root/res
+    real_res = tmp_path / "somewhere" / "assets"
+    (real_res / "config").mkdir(parents=True)
+    (real_res / "config" / "fastfetch.jsonc").write_text("{}")
+    (real_res / "native").mkdir()
+
+    anchor = str(real_res / "config" / "fastfetch.jsonc")
+    monkeypatch.setattr(paths, "_asset_file",
+                        lambda rel: anchor if rel == paths._RES_ANCHOR else None)
+    assert paths.res_dir() == str(real_res)
+
+
+def test_a_resolved_res_is_cached_but_a_missing_one_is_not(tmp_path,
+                                                           monkeypatch):
+    root = _fake_install(tmp_path, with_res=False)
+    monkeypatch.setattr(paths, "_root_candidates", lambda: [root])
+    monkeypatch.setattr(paths, "_asset_file", lambda rel: None)
+    paths.reset_plugin_root()
+    # nothing found: returns the guess and does NOT cache, so a later call
+    # (after the client finishes materialising assets) gets to try again
+    assert paths.res_dir() == os.path.join(root, "res")
+    assert paths._res_dir is None
+
+
+def test_has_assets_recognises_a_real_res_dir(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert not paths._has_assets(str(empty))
+    (empty / "native").mkdir()
+    assert paths._has_assets(str(empty))
+
+
+def test_the_sdk_derivation_strips_the_anchor_off_the_real_path(monkeypatch):
+    monkeypatch.setattr(paths, "_asset_file",
+                        lambda rel: "/data/x/assets/config/fastfetch.jsonc")
+    monkeypatch.setattr(paths, "real", lambda p: p)
+    assert paths._res_via_sdk() == "/data/x/assets"
