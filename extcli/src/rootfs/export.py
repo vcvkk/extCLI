@@ -12,6 +12,7 @@ caller's business.
 """
 
 import os
+import posixpath
 import tarfile
 import time
 
@@ -49,9 +50,11 @@ def measure(root):
 def archive(root, target, on_progress=None):
     """Writes the container to `target`. Returns (ok, detail).
 
-    Symlinks are stored as symlinks, not followed: a rootfs is full of
-    absolute ones pointing at its own `/`, and following them would both
-    inflate the archive and bake this phone's paths into it.
+    Symlinks are stored as symlinks, not followed.  Absolute links that point
+    at the rootfs's own `/` are made relative: they still resolve to the same
+    member after restore, but archives also unpack with Python's safe default
+    extraction filter.  Following links would both inflate the archive and
+    bake this phone's paths into it.
     """
     if not os.path.isdir(root):
         return False, "there is no container to export"
@@ -68,7 +71,7 @@ def archive(root, target, on_progress=None):
             for path in entries():
                 try:
                     archive_file.add(path, arcname=os.path.relpath(path, root),
-                                     recursive=False)
+                                     recursive=False, filter=_portable_link)
                 except (OSError, ValueError) as e:
                     # a socket, or something that went away mid-walk; the rest
                     # of the container is still worth having
@@ -92,3 +95,18 @@ def archive(root, target, on_progress=None):
         except Exception:
             pass
     return True, target
+
+
+def _portable_link(info):
+    """Return a tar member whose rootfs-local absolute link is relative.
+
+    Alpine uses links such as ``/bin/busybox`` to mean a file below its own
+    root, not a file in the Android host filesystem.  A relative target has
+    that same meaning once the archive is restored and, unlike an absolute
+    target, is accepted by :mod:`tarfile`'s data filter.
+    """
+    if info.issym() and info.linkname.startswith("/"):
+        info.linkname = posixpath.relpath(
+            info.linkname.lstrip("/"), posixpath.dirname(info.name) or "."
+        )
+    return info
