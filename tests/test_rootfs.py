@@ -2573,8 +2573,7 @@ def test_the_archive_holds_the_container(tmp_path):
 
 
 def test_a_symlink_is_stored_as_itself(tmp_path):
-    """Following them would bake this phone's paths into the archive, and
-    inflate it with a copy of every file a link points at."""
+    """Links remain links, but rootfs-local absolute targets become portable."""
     import tarfile
 
     from extcli_src.rootfs import export
@@ -2585,7 +2584,7 @@ def test_a_symlink_is_stored_as_itself(tmp_path):
     with tarfile.open(target) as archive:
         link = archive.getmember("bin/sh")
     assert link.issym()
-    assert link.linkname == "/bin/busybox"
+    assert link.linkname == "busybox"
 
 
 def test_the_archive_can_be_unpacked_back(tmp_path):
